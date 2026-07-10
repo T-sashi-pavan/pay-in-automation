@@ -16,10 +16,10 @@ const getInitialTheme = (): Theme => {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved === 'light' || saved === 'dark') return saved;
   } catch {}
-  if (typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: light)').matches) {
-    return 'light';
-  }
-  return 'dark';
+  // Default to light regardless of OS preference — the user explicitly
+  // wants light mode on first visit; dark mode only applies once someone
+  // toggles it (persisted above from then on).
+  return 'light';
 };
 
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
