@@ -1,0 +1,44 @@
+{
+  "mappings": {
+    "lob": ["lob", "line of business", "lob type", "class of business", "business line", "lob/class", "type of vehicle", "class of vehicle"],
+    "file_type": ["file type", "file_type", "type of file", "excel type"],
+    "insurance_company": ["insurance company", "insurer", "company", "insurance_company", "insurer name"],
+    "product": ["product", "product name", "product_name", "product type", "segment", "prod", "products"],
+    "policy_type": ["policy type", "policy_type", "policy", "subtype", "type of policy", "policy_category", "section text", "bzi type", "business type", "type", "business type", "section text ", "section"],
+    "plan_type": ["plan type", "plan_type", "plan", "plan name"],
+    "sub_product": ["sub product", "sub_product", "sub-product", "carrier type", "subclass", "sub class"],
+    "class_": ["class", "vehicle class", "class of vehicle"],
+    "sub_class": ["sub class", "sub_class", "sub-class", "subclass"],
+    "make": ["make", "manufacturer", "brand"],
+    "model": ["model", "vehicle model", "model name"],
+    "fuel_type": ["fuel type", "fuel_type", "fuel", "fuel type name"],
+    "body_type": ["body type", "body_type", "body"],
+    "vehicle_age": ["vehicle age", "age", "vehicle_age", "age of vehicle", "vehicle age years", "age group", "vehicle age cat", "uw remarks", "remarks 1"],
+    "cpa_status": ["cpa status", "cpa", "cpa_status", "cpa cover"],
+    "ncb_status": ["ncb status", "ncb", "ncb_status", "ncb percent"],
+    "partner_type": ["partner type", "partner_type", "partner", "channel"],
+    "state": ["state", "states", "region", "location", "rto state", "state name"],
+    "zone": ["zone", "zones", "region zone", "rto zone"],
+    "source": ["source", "business source", "broker", "posp"],
+    "rto": ["rto", "rto location", "rto code", "rto office"],
+    "effective_date": ["effective date", "date", "effective_from", "start date", "w.e.f", "w.e.f.", "date of effect", "change date"],
+    "remarks": ["remarks", "remark", "notes", "comment", "clause", "uw remarks", "remarks 1", "remarks 2", "condition", "uw's condition"],
+    
+    "payin_od": ["payin od", "payin_od", "pay-in od", "pay in od", "payin od %", "pay-in od %", "od payin", "insurer od %", "od commission", "od pay-in", "broker", "broker ", "dis %", "discount %", "discount", "cd1", "cd2", "cd 1", "cd 2"],
+    "payout_od": ["payout od", "payout_od", "pay-out od", "pay out od", "payout od %", "payout od %", "od payout", "payout od %", "od commission payout", "od pay-out"],
+    "payin_tp": ["payin tp", "payin_tp", "pay-in tp", "pay in tp", "payin tp %", "pay-in tp %", "tp payin", "insurer tp %", "tp commission", "tp pay-in"],
+    "payout_tp": ["payout tp", "payout_tp", "pay-out tp", "pay out tp", "payout tp %", "payout tp %", "tp payout", "payout tp %", "tp commission payout", "tp pay-out"],
+    "payin_net": ["payin net", "payin_net", "pay-in net", "pay in net", "payin net %", "pay-in net %", "net payin", "insurer net %", "net commission", "net pay-in", "average net po\n(converted)", "average net po", "net payout", "net payout %"],
+    "payout_net": ["payout net", "payout_net", "pay-out net", "pay out net", "payout net %", "payout net %", "net payout", "payout net %", "net commission payout", "net pay-out"],
+    
+    "payin_reward": ["payin reward", "payin_reward", "pay-in reward", "pay in reward", "payin reward %", "reward %", "reward payin", "reward pay-in", "reward commission", "or %", "or", "reward"],
+    "payout_reward": ["payout reward", "payout_reward", "pay-out reward", "pay out reward", "payout reward %", "reward payout", "reward pay-out"],
+    "payin_scheme": ["payin scheme", "payin_scheme", "pay-in scheme", "pay in scheme", "payin scheme %", "scheme %", "scheme payin", "scheme pay-in", "scheme commission", "scheme"],
+    "payout_scheme": ["payout scheme", "payout_scheme", "pay-out scheme", "pay out scheme", "payout scheme %", "scheme payout", "scheme pay-out"],
+    
+    "payin_type": ["payin type", "payin_type", "commission type", "pay-in type"],
+    "premium_type": ["premium type", "premium_type", "type of premium", "premium basis"],
+    "slab_from": ["slab from", "slab_from", "limit from", "from", "range from", "min slab", "premium from", "idv from", "idv_from", "idv slab from", "cc", "cc range"],
+    "slab_to": ["slab to", "slab_to", "limit to", "to", "range to", "max slab", "premium to", "idv to", "idv_to", "idv slab to"]
+  }
+}

@@ -1,0 +1,37 @@
+services:
+  # ── Backend: FastAPI ──────────────────────────────────────────────────────
+  - type: web
+    name: payin-backend
+    runtime: python
+    plan: free
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: cd backend && alembic upgrade head && cd .. && uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.5
+      # Paste your Neon (or other Postgres) connection string here after the
+      # service is created — not stored in this file / git.
+      - key: DATABASE_URL
+        sync: false
+      # After the frontend static site below is created, copy its URL here,
+      # e.g. https://payin-frontend.onrender.com — comma-separate multiple.
+      - key: CORS_ORIGINS
+        sync: false
+
+  # ── Frontend: Vite/React static site ─────────────────────────────────────
+  - type: web
+    name: payin-frontend
+    runtime: static
+    buildCommand: cd frontend && npm install && npm run build
+    staticPublishPath: frontend/dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      # After the backend above is created, copy its URL + "/api" here,
+      # e.g. https://payin-backend.onrender.com/api — this is baked in at
+      # BUILD time (Vite), so changing it requires a redeploy, not just a
+      # dashboard restart.
+      - key: VITE_API_BASE_URL
+        sync: false
