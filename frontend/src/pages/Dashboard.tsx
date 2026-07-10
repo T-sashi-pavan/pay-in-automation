@@ -36,8 +36,7 @@ import {
   ArrowDown,
   X,
   FileSpreadsheet,
-  Plus,
-  FileText,
+  UploadCloud,
 } from 'lucide-react';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -123,13 +122,13 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  // Column visibility dropdown
+  // Columns/Export are now accordion sections inside the single "More
+  // Options" dropdown, rather than two separate floating dropdowns.
   const [isColsOpen, setIsColsOpen] = useState(false);
-  const colsRef = useRef<HTMLDivElement>(null);
-
-  // Export dropdown
   const [isExportOpen, setIsExportOpen] = useState(false);
-  const exportRef = useRef<HTMLDivElement>(null);
+  const [isMoreOpen, setIsMoreOpen] = useState(false);
+  const moreRef = useRef<HTMLDivElement>(null);
+  const closeMore = () => { setIsMoreOpen(false); setIsColsOpen(false); setIsExportOpen(false); };
 
   // Upload Grid — permanent toolbar trigger (file input lives here now, not in HistoryDrawer)
   const uploadInputRef = useRef<HTMLInputElement>(null);
@@ -138,6 +137,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
       onUploadFile(e.target.files[0]);
       e.target.value = '';
     }
+  };
+
+  // Drag-and-drop onto the upload banner
+  const [isDragging, setIsDragging] = useState(false);
+  const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); setIsDragging(true); };
+  const handleDragLeave = (e: React.DragEvent) => { e.preventDefault(); setIsDragging(false); };
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) onUploadFile(file);
   };
 
   // TanStack Table state
@@ -149,11 +159,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
     try { localStorage.setItem('dashboard_col_visibility', JSON.stringify(columnVisibility)); } catch {}
   }, [columnVisibility]);
 
-  // Close cols/export dropdowns on outside click
+  // Close the "More Options" dropdown (and its Columns/Export accordions) on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (colsRef.current && !colsRef.current.contains(e.target as Node)) setIsColsOpen(false);
-      if (exportRef.current && !exportRef.current.contains(e.target as Node)) setIsExportOpen(false);
+      if (moreRef.current && !moreRef.current.contains(e.target as Node)) closeMore();
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
@@ -321,29 +330,64 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const tableContent = (
     <div className={`flex flex-col h-full bg-white dark:bg-[#0B1220] ${isFullscreen ? 'fixed inset-0 z-[30]' : ''}`}>
 
-      {/* ── TOOLBAR ── */}
-      <div className="flex-shrink-0 flex items-center gap-2 px-4 py-2 border-b border-[#E5E7EB] dark:border-[#1F2937] bg-white dark:bg-[#111827] flex-wrap">
+      {/* ── UPLOAD BANNER (prominent, permanent drag-and-drop target) ── */}
+      <div
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        onClick={() => uploadInputRef.current?.click()}
+        className={`flex-shrink-0 flex items-center justify-between gap-4 mx-4 mt-3 mb-1 px-5 py-4 rounded-2xl border-2 border-dashed cursor-pointer transition-colors duration-150 ${
+          isDragging
+            ? 'border-[#4F46E5] bg-[#4F46E5]/5 dark:bg-indigo-500/10'
+            : 'border-[#C7D2FE] dark:border-slate-700 bg-slate-50 dark:bg-slate-900/40 hover:border-[#4F46E5]/50 dark:hover:border-indigo-500/50'
+        }`}
+      >
+        <input
+          ref={uploadInputRef}
+          type="file"
+          accept=".xlsx,.xls"
+          className="hidden"
+          onChange={handleUploadInputChange}
+        />
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-[#4F46E5]/10 dark:bg-indigo-500/10 flex-shrink-0">
+            <UploadCloud className="w-5 h-5 text-[#4F46E5] dark:text-indigo-400" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-bold text-slate-800 dark:text-slate-100">Upload a new broker grid</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400 truncate">Drag and drop a file here, or click to browse</p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); uploadInputRef.current?.click(); }}
+          disabled={isUploading}
+          className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#4F46E5] hover:bg-[#4338CA] disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm font-bold shadow-sm transition-colors duration-150 cursor-pointer flex-shrink-0"
+        >
+          {isUploading ? <RefreshCw className="w-4.5 h-4.5 animate-spin" /> : <UploadCloud className="w-4.5 h-4.5" />}
+          <span>{isUploading ? 'Uploading...' : 'Upload Grid'}</span>
+        </button>
+      </div>
 
-        {/* LEFT: Upload Grid, History, breadcrumb */}
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <input
-            ref={uploadInputRef}
-            type="file"
-            accept=".xlsx,.xls"
-            className="hidden"
-            onChange={handleUploadInputChange}
-          />
-          <button
-            type="button"
-            onClick={() => uploadInputRef.current?.click()}
-            disabled={isUploading}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#4F46E5] hover:bg-[#4338CA] disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm font-bold shadow-sm transition-colors duration-150 cursor-pointer"
-            title="Upload a new grid"
-          >
-            {isUploading ? <RefreshCw className="w-4.5 h-4.5 animate-spin" /> : <Plus className="w-4.5 h-4.5" />}
-            <span className="hidden sm:inline">Upload Grid</span>
-          </button>
+      {/* ── BREADCRUMB ROW: current file + History + Refresh ── */}
+      <div className="flex-shrink-0 flex items-center justify-between gap-2 px-4 py-2 border-b border-[#E5E7EB] dark:border-[#1F2937] bg-white dark:bg-[#111827] flex-wrap">
+        {company && (
+          <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-500 min-w-0">
+            <span>Upload Files</span>
+            <span className="text-slate-300 dark:text-slate-700">›</span>
+            <span className="font-semibold text-slate-700 dark:text-slate-300">{company}</span>
+            {filename && (
+              <>
+                <span className="text-slate-300 dark:text-slate-700">•</span>
+                <span className="truncate max-w-[220px]" title={filename}>{filename}</span>
+              </>
+            )}
+            <span className="text-slate-300 dark:text-slate-700">•</span>
+            <span className="font-semibold text-slate-700 dark:text-slate-300">{totalRecords.toLocaleString()} rules</span>
+          </div>
+        )}
 
+        <div className="flex items-center gap-2 flex-shrink-0 ml-auto">
           <button
             type="button"
             onClick={() => setIsHistoryOpen(true)}
@@ -369,26 +413,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
               <RefreshCw className="w-3.5 h-3.5" />
             </button>
           )}
-
-          {company && (
-            <div className="hidden lg:flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-500 pl-1">
-              <span>Upload Files</span>
-              <span className="text-slate-300 dark:text-slate-700">›</span>
-              <span className="font-semibold text-slate-700 dark:text-slate-300">{company}</span>
-              {filename && (
-                <>
-                  <span className="text-slate-300 dark:text-slate-700">•</span>
-                  <span className="truncate max-w-[160px]" title={filename}>{filename}</span>
-                </>
-              )}
-              <span className="text-slate-300 dark:text-slate-700">•</span>
-              <span className="font-semibold text-slate-700 dark:text-slate-300">{totalRecords.toLocaleString()} rules</span>
-            </div>
-          )}
         </div>
+      </div>
 
-        {/* CENTER: Search */}
-        <div className="order-3 sm:order-none w-full sm:w-auto sm:flex-1 sm:max-w-xl sm:mx-auto">
+      {/* ── SEARCH + TABS + MORE OPTIONS ROW ── */}
+      <div className="flex-shrink-0 flex items-center gap-3 px-4 py-2 border-b border-[#E5E7EB] dark:border-[#1F2937] bg-white dark:bg-[#111827] flex-wrap">
+
+        {/* Search */}
+        <div className="order-1 w-full sm:w-auto sm:flex-1 sm:max-w-md">
           <form onSubmit={handleSearchSubmit} className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 dark:text-slate-500" />
             <input
@@ -410,57 +442,32 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </form>
         </div>
 
-        {/* RIGHT: Filters, Columns, Fullscreen, Export */}
-        <div className="flex items-center gap-2 flex-shrink-0 ml-auto sm:ml-0">
-          <button
-            type="button"
-            onClick={() => setIsFilterOpen(true)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors duration-150 cursor-pointer ${
-              activeFilterCount > 0
-                ? 'bg-[#4F46E5]/10 border-[#4F46E5]/30 text-[#4F46E5] dark:text-indigo-300 hover:bg-[#4F46E5]/15'
-                : 'bg-slate-100 dark:bg-slate-800 border-[#E5E7EB] dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-100'
-            }`}
-          >
-            <Filter className="w-3.5 h-3.5" />
-            <span>Filters</span>
-            {activeFilterCount > 0 && (
-              <span className="bg-[#4F46E5] text-white text-xs font-bold px-1.5 py-0.5 rounded-full leading-none">{activeFilterCount}</span>
-            )}
-          </button>
-
-          {/* Column Visibility */}
-          <div className="relative" ref={colsRef}>
+        {/* Non-Slab / Slab tabs — inline with search now, not a separate full-width row */}
+        <div className="order-2 flex items-center gap-5 flex-shrink-0">
+          {([
+            { key: 'NON_SLAB', label: 'Non-Slab' },
+            { key: 'SLAB', label: 'Slab' },
+          ] as const).map(({ key, label }) => (
             <button
+              key={key}
               type="button"
-              onClick={() => setIsColsOpen(prev => !prev)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 border border-[#E5E7EB] dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-semibold transition-colors duration-150 cursor-pointer"
-              title="Toggle columns"
+              onClick={() => setFilters(prev => ({ ...prev, commission_type: key }))}
+              className={`relative py-2 text-sm font-medium transition-colors duration-150 cursor-pointer ${
+                currentTab === key
+                  ? 'text-[#4F46E5] dark:text-indigo-400'
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+              }`}
             >
-              <Eye className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Columns</span>
+              {label}
+              {currentTab === key && (
+                <span className="absolute left-0 right-0 -bottom-2 h-0.5 bg-[#4F46E5] dark:bg-indigo-400 rounded-full" />
+              )}
             </button>
-            {isColsOpen && (
-              <div className="absolute right-0 top-full mt-1.5 w-48 bg-white dark:bg-slate-900 border border-[#E5E7EB] dark:border-slate-700 rounded-xl shadow-lg z-20 p-2 flex flex-col gap-0.5">
-                <p className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider px-2 py-1">Column Visibility</p>
-                {table.getAllLeafColumns()
-                  .filter(col => col.getCanHide())
-                  .map(col => (
-                    <label key={col.id} className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition-colors">
-                      <input
-                        type="checkbox"
-                        checked={col.getIsVisible()}
-                        onChange={col.getToggleVisibilityHandler()}
-                        className="w-3.5 h-3.5 rounded accent-[#4F46E5] cursor-pointer"
-                      />
-                      <span className="text-xs text-slate-600 dark:text-slate-300 capitalize">{String(col.columnDef.header)}</span>
-                    </label>
-                  ))
-                }
-              </div>
-            )}
-          </div>
+          ))}
+        </div>
 
-          {/* Full Screen */}
+        {/* Fullscreen + More Options */}
+        <div className="order-3 flex items-center gap-2 flex-shrink-0 ml-auto">
           <button
             type="button"
             onClick={() => setIsFullscreen(prev => !prev)}
@@ -470,72 +477,98 @@ export const Dashboard: React.FC<DashboardProps> = ({
             {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
           </button>
 
-          {/* Export dropdown */}
-          <div className="relative" ref={exportRef}>
+          <div className="relative" ref={moreRef}>
             <button
               type="button"
-              onClick={() => setIsExportOpen(prev => !prev)}
-              disabled={records.length === 0}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#E5E7EB] dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-xs font-semibold transition-colors duration-150 cursor-pointer"
-              title="Export data"
+              onClick={() => setIsMoreOpen(prev => !prev)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 border border-[#E5E7EB] dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-semibold transition-colors duration-150 cursor-pointer"
             >
-              <Download className="w-3.5 h-3.5" />
-              <span>Export</span>
-              <ChevronDown className="w-3 h-3" />
+              <span>More Options</span>
+              {activeFilterCount > 0 && (
+                <span className="bg-[#4F46E5] text-white text-xs font-bold px-1.5 py-0.5 rounded-full leading-none">{activeFilterCount}</span>
+              )}
+              <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-150 ${isMoreOpen ? 'rotate-180' : ''}`} />
             </button>
-            {isExportOpen && (
-              <div className="absolute right-0 top-full mt-1.5 w-44 bg-white dark:bg-slate-900 border border-[#E5E7EB] dark:border-slate-700 rounded-xl shadow-lg z-20 p-1.5 flex flex-col gap-0.5">
+
+            {isMoreOpen && (
+              <div className="absolute right-0 top-full mt-2 w-64 bg-white dark:bg-slate-900 border border-[#E5E7EB] dark:border-slate-700 rounded-xl shadow-lg z-30 p-2 flex flex-col gap-1">
+
+                {/* Filters */}
                 <button
                   type="button"
-                  onClick={() => { handleExportCSV(); setIsExportOpen(false); }}
-                  className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer"
+                  onClick={() => { setIsFilterOpen(true); closeMore(); }}
+                  className="flex items-center justify-between gap-2.5 px-3 py-2.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer"
                 >
-                  <Download className="w-3.5 h-3.5" /> CSV
+                  <span className="flex items-center gap-2.5"><Filter className="w-4 h-4" /> Filters</span>
+                  {activeFilterCount > 0 && (
+                    <span className="bg-[#4F46E5] text-white text-xs font-bold px-1.5 py-0.5 rounded-full leading-none">{activeFilterCount}</span>
+                  )}
                 </button>
+
+                <div className="h-px bg-[#E5E7EB] dark:bg-slate-800 my-1" />
+
+                {/* Columns (expands in place) */}
                 <button
                   type="button"
-                  onClick={() => { handleExportJSON(); setIsExportOpen(false); }}
-                  className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer"
+                  onClick={() => setIsColsOpen(prev => !prev)}
+                  className="flex items-center justify-between gap-2.5 px-3 py-2.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer"
                 >
-                  <FileJson className="w-3.5 h-3.5" /> JSON
+                  <span className="flex items-center gap-2.5"><Eye className="w-4 h-4" /> Columns</span>
+                  <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-150 ${isColsOpen ? 'rotate-180' : ''}`} />
                 </button>
-                <div className="my-1 h-px bg-[#E5E7EB] dark:bg-slate-800" />
-                <div className="flex items-center justify-between gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium text-slate-300 dark:text-slate-600 cursor-not-allowed">
-                  <span className="flex items-center gap-2.5"><FileSpreadsheet className="w-3.5 h-3.5" /> Excel</span>
-                  <span className="text-[10px] uppercase tracking-wide">Soon</span>
-                </div>
-                <div className="flex items-center justify-between gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium text-slate-300 dark:text-slate-600 cursor-not-allowed">
-                  <span className="flex items-center gap-2.5"><FileText className="w-3.5 h-3.5" /> PDF</span>
-                  <span className="text-[10px] uppercase tracking-wide">Soon</span>
-                </div>
+                {isColsOpen && (
+                  <div className="pl-3 pr-1 py-1 flex flex-col gap-0.5 max-h-56 overflow-y-auto">
+                    {table.getAllLeafColumns()
+                      .filter(col => col.getCanHide())
+                      .map(col => (
+                        <label key={col.id} className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition-colors">
+                          <input
+                            type="checkbox"
+                            checked={col.getIsVisible()}
+                            onChange={col.getToggleVisibilityHandler()}
+                            className="w-3.5 h-3.5 rounded accent-[#4F46E5] cursor-pointer"
+                          />
+                          <span className="text-xs text-slate-600 dark:text-slate-300 capitalize">{String(col.columnDef.header)}</span>
+                        </label>
+                      ))
+                    }
+                  </div>
+                )}
+
+                <div className="h-px bg-[#E5E7EB] dark:bg-slate-800 my-1" />
+
+                {/* Export (expands in place) */}
+                <button
+                  type="button"
+                  onClick={() => setIsExportOpen(prev => !prev)}
+                  disabled={records.length === 0}
+                  className="flex items-center justify-between gap-2.5 px-3 py-2.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer"
+                >
+                  <span className="flex items-center gap-2.5"><Download className="w-4 h-4" /> Export</span>
+                  <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-150 ${isExportOpen ? 'rotate-180' : ''}`} />
+                </button>
+                {isExportOpen && (
+                  <div className="pl-3 pr-1 py-1 flex flex-col gap-1">
+                    <button
+                      type="button"
+                      onClick={() => { handleExportCSV(); closeMore(); }}
+                      className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5" /> CSV
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { handleExportJSON(); closeMore(); }}
+                      className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer"
+                    >
+                      <FileJson className="w-3.5 h-3.5" /> JSON
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>
         </div>
-      </div>
-
-      {/* ── DATASET TABS (below toolbar) ── */}
-      <div className="flex-shrink-0 flex items-center gap-5 px-4 border-b border-[#E5E7EB] dark:border-[#1F2937] bg-white dark:bg-[#111827]">
-        {([
-          { key: 'NON_SLAB', label: 'Non-Slab' },
-          { key: 'SLAB', label: 'Slab' },
-        ] as const).map(({ key, label }) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => setFilters(prev => ({ ...prev, commission_type: key }))}
-            className={`relative py-2.5 text-sm font-medium transition-colors duration-150 cursor-pointer ${
-              currentTab === key
-                ? 'text-[#4F46E5] dark:text-indigo-400'
-                : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
-            }`}
-          >
-            {label}
-            {currentTab === key && (
-              <span className="absolute left-0 right-0 -bottom-px h-0.5 bg-[#4F46E5] dark:bg-indigo-400 rounded-full" />
-            )}
-          </button>
-        ))}
       </div>
 
       {/* ── TABLE AREA ── */}
