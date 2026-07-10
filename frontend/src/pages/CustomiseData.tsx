@@ -7,6 +7,8 @@ import type { FilterOption } from '../components/MultiSelectFilter';
 import { MultiSelectFilter } from '../components/MultiSelectFilter';
 import { createNonSlabColumns, createSlabColumns } from '../tableColumns/commissionRuleColumns';
 import { useEditRuleField } from '../hooks/useEditRuleField';
+import { useTheme } from '../contexts/ThemeContext';
+import { useSidebar } from '../contexts/SidebarContext';
 import type { EditableRuleField, EditableSlabField } from '../types';
 import {
   useReactTable,
@@ -32,6 +34,9 @@ import {
   FileSpreadsheet,
   ArrowUpDown,
   ArrowUp,
+  Menu,
+  Moon,
+  Sun,
   ArrowDown,
 } from 'lucide-react';
 
@@ -85,6 +90,9 @@ const STATIC_VEHICLE_AGE: FilterOption[] = [
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export const CustomiseData: React.FC = () => {
+  const { theme, toggleTheme } = useTheme();
+  const { openMobileSidebar } = useSidebar();
+
   const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [dateFrom, setDateFrom] = useState('');
@@ -312,8 +320,28 @@ export const CustomiseData: React.FC = () => {
         {/* ── TOOLBAR ── */}
         <div className="flex-shrink-0 flex items-center gap-2 px-4 py-2 border-b border-[#E5E7EB] dark:border-[#1F2937] bg-white dark:bg-[#111827] flex-wrap">
 
-          {/* LEFT: date range + total count */}
+          {/* LEFT: mobile menu + theme toggle + date range + total count */}
           <div className="flex items-center gap-2 flex-shrink-0">
+            {/* Mobile sidebar trigger — the old top header bar (which owned this) was removed */}
+            <button
+              type="button"
+              onClick={openMobileSidebar}
+              className="md:hidden p-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              title="Open menu"
+            >
+              <Menu className="w-4.5 h-4.5" />
+            </button>
+
+            {/* Theme toggle — moved here from the removed top header bar */}
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-[#E5E7EB] dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 transition-colors duration-150 cursor-pointer"
+              title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {theme === 'dark' ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
+            </button>
+
             <div className="hidden lg:flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-500">
               <Calendar className="w-3.5 h-3.5" />
               <input

@@ -5,12 +5,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Layers,
-  Moon,
-  Sun,
-  User,
-  Menu,
 } from 'lucide-react';
-import { useTheme } from '../contexts/ThemeContext';
+import { useSidebar } from '../contexts/SidebarContext';
 
 interface DashboardLayoutProps {
   activeTab: 'upload' | 'customise';
@@ -27,8 +23,7 @@ const getSavedCollapsed = (): boolean => {
 
 export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ activeTab, onTabChange, children }) => {
   const [collapsed, setCollapsed] = useState<boolean>(getSavedCollapsed);
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const { theme, toggleTheme } = useTheme();
+  const { mobileOpen, closeMobileSidebar } = useSidebar();
 
   const toggleCollapsed = () => {
     setCollapsed(prev => {
@@ -71,7 +66,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ activeTab, onT
             <button
               key={id}
               type="button"
-              onClick={() => { onTabChange(id); setMobileOpen(false); }}
+              onClick={() => { onTabChange(id); closeMobileSidebar(); }}
               title={collapsed && !mobileOpen ? label : undefined}
               className={`flex items-center h-8 rounded-lg transition-colors duration-150 cursor-pointer w-full text-left overflow-hidden
                 ${isActive
@@ -118,7 +113,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ activeTab, onT
       {/* ── MOBILE OVERLAY SIDEBAR ── */}
       <>
         <div
-          onClick={() => setMobileOpen(false)}
+          onClick={() => closeMobileSidebar()}
           className={`md:hidden fixed inset-0 z-40 bg-black/60 backdrop-blur-sm transition-opacity duration-300 ${
             mobileOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
           }`}
@@ -133,45 +128,10 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ activeTab, onT
       </>
 
       {/* ── MAIN AREA ── */}
+      {/* Top header bar was removed — the mobile menu trigger and theme
+          toggle now live inside each page's own toolbar instead (see
+          Dashboard.tsx/CustomiseData.tsx), wired via SidebarContext/ThemeContext. */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-
-        {/* TOP NAV BAR */}
-        <header className="h-14 flex-shrink-0 flex items-center justify-between px-4 md:px-6 border-b border-[#E5E7EB] dark:border-[#1F2937] bg-white/70 dark:bg-[#111827]/60 backdrop-blur-sm">
-          <div className="flex items-center gap-3">
-            {/* Mobile hamburger */}
-            <button
-              type="button"
-              onClick={() => setMobileOpen(true)}
-              className="md:hidden p-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-            >
-              <Menu className="w-4.5 h-4.5" />
-            </button>
-            <div className="flex items-center gap-2">
-              <div className="w-1.5 h-1.5 rounded-full bg-[#4F46E5]" />
-              <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                {activeTab === 'upload' ? 'Upload Files' : 'Organise the Data'}
-              </span>
-            </div>
-            <div className="hidden sm:flex items-center gap-1.5 text-xs text-slate-400 dark:text-slate-500">
-              <span className="text-slate-300 dark:text-slate-700">/</span>
-              <span>Pay-In Automation</span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={toggleTheme}
-              className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-              title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-            >
-              {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-            </button>
-            <div className="ml-1 w-7 h-7 rounded-full bg-[#4F46E5] flex items-center justify-center cursor-pointer">
-              <User className="w-3.5 h-3.5 text-white" />
-            </div>
-          </div>
-        </header>
 
         {/* PAGE CONTENT */}
         <main className="flex-1 overflow-hidden min-h-0 bg-white dark:bg-[#0B1220]">

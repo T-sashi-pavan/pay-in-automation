@@ -5,6 +5,7 @@ import './index.css'
 import App from './App.tsx'
 import { ThemeProvider } from './contexts/ThemeContext'
 import { NotificationProvider } from './contexts/NotificationContext'
+import { SidebarProvider } from './contexts/SidebarContext'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -20,7 +21,9 @@ createRoot(document.getElementById('root')!).render(
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <NotificationProvider>
-          <App />
+          <SidebarProvider>
+            <App />
+          </SidebarProvider>
         </NotificationProvider>
       </ThemeProvider>
     </QueryClientProvider>

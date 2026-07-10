@@ -9,6 +9,8 @@ import type { CommissionRule, UploadHistory, EditableRuleField, EditableSlabFiel
 import { ExpandedRuleDetails } from '../components/ExpandedRuleDetails';
 import { createNonSlabColumns, createSlabColumns } from '../tableColumns/commissionRuleColumns';
 import { useEditRuleField } from '../hooks/useEditRuleField';
+import { useTheme } from '../contexts/ThemeContext';
+import { useSidebar } from '../contexts/SidebarContext';
 import {
   useReactTable,
   getCoreRowModel,
@@ -37,6 +39,9 @@ import {
   X,
   FileSpreadsheet,
   UploadCloud,
+  Menu,
+  Moon,
+  Sun,
 } from 'lucide-react';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -111,6 +116,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onUploadFile,
   isUploading,
 }) => {
+  const { theme, toggleTheme } = useTheme();
+  const { openMobileSidebar } = useSidebar();
+
   const [searchInput, setSearchInput] = useState(filters.search);
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
   const toggleRowExpanded = (rowId: string) => {
@@ -371,21 +379,33 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
       {/* ── BREADCRUMB ROW: current file + History + Refresh ── */}
       <div className="flex-shrink-0 flex items-center justify-between gap-2 px-4 py-2 border-b border-[#E5E7EB] dark:border-[#1F2937] bg-white dark:bg-[#111827] flex-wrap">
-        {company && (
-          <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-500 min-w-0">
-            <span>Upload Files</span>
-            <span className="text-slate-300 dark:text-slate-700">›</span>
-            <span className="font-semibold text-slate-700 dark:text-slate-300">{company}</span>
-            {filename && (
-              <>
-                <span className="text-slate-300 dark:text-slate-700">•</span>
-                <span className="truncate max-w-[220px]" title={filename}>{filename}</span>
-              </>
-            )}
-            <span className="text-slate-300 dark:text-slate-700">•</span>
-            <span className="font-semibold text-slate-700 dark:text-slate-300">{totalRecords.toLocaleString()} rules</span>
-          </div>
-        )}
+        <div className="flex items-center gap-2 min-w-0">
+          {/* Mobile sidebar trigger — the old top header bar (which owned this) was removed */}
+          <button
+            type="button"
+            onClick={openMobileSidebar}
+            className="md:hidden p-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer flex-shrink-0"
+            title="Open menu"
+          >
+            <Menu className="w-4.5 h-4.5" />
+          </button>
+
+          {company && (
+            <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-500 min-w-0">
+              <span>Upload Files</span>
+              <span className="text-slate-300 dark:text-slate-700">›</span>
+              <span className="font-semibold text-slate-700 dark:text-slate-300">{company}</span>
+              {filename && (
+                <>
+                  <span className="text-slate-300 dark:text-slate-700">•</span>
+                  <span className="truncate max-w-[220px]" title={filename}>{filename}</span>
+                </>
+              )}
+              <span className="text-slate-300 dark:text-slate-700">•</span>
+              <span className="font-semibold text-slate-700 dark:text-slate-300">{totalRecords.toLocaleString()} rules</span>
+            </div>
+          )}
+        </div>
 
         <div className="flex items-center gap-2 flex-shrink-0 ml-auto">
           <button
@@ -401,6 +421,16 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 {uploads.length}
               </span>
             )}
+          </button>
+
+          {/* Theme toggle — moved here from the removed top header bar */}
+          <button
+            type="button"
+            onClick={toggleTheme}
+            className="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-[#E5E7EB] dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 transition-colors duration-150 cursor-pointer"
+            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          >
+            {theme === 'dark' ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
           </button>
 
           {onRefresh && (
