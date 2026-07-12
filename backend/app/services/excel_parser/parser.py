@@ -63,6 +63,11 @@ def extract_numeric_range(text: str) -> Tuple[Optional[float], Optional[float]]:
 def classify_rule_type(sheet_name: str, headers: List[str], base_rule: Dict[str, Any], flat_rates: Dict[str, Any]) -> str:
     company = str(base_rule.get("insurance_company") or "").lower()
     sheet_lower = sheet_name.lower()
+    # A sheet literally named "Non-Slab" (a natural, common choice for this
+    # app's own domain) would otherwise false-positive-match every "slab"
+    # substring keyword check below via simple containment ("slab" in
+    # "non-slab" is True) and get every row on it misclassified as SLAB.
+    sheet_lower = re.sub(r"non[\s\-_]*slab", "", sheet_lower)
     headers_lower = [str(h).lower() for h in headers]
     
     # --- TATA SPECIFIC ---
@@ -126,6 +131,33 @@ def is_slab_rule(sheet_name: str, headers: List[str], base_rule: Dict[str, Any],
     return classify_rule_type(sheet_name, headers, base_rule, flat_rates) == "SLAB"
 
 
+def is_rule_effectively_empty(rule: Dict[str, Any]) -> bool:
+    """
+    True if a parsed rule carries no usable identifying data at all — no
+    business-key fields, no rates, no slab tiers with a real rate. This is a
+    real failure mode for OCR-based PDF extraction (a page's column layout
+    can be misread badly enough that every cell lands on the wrong column and
+    every value ends up null) — such rows should be dropped rather than
+    stored as if they were real data.
+    """
+    # insurance_company is deliberately excluded — it gets a blanket filename/company
+    # fallback applied to every row regardless of whether anything real was extracted,
+    # so its presence alone doesn't indicate the row carries real data.
+    identity_fields = ("product", "policy_type", "sub_class", "state", "make", "model", "remarks")
+    if any(rule.get(f) for f in identity_fields):
+        return False
+
+    rate_fields = ("payin_od", "payin_tp", "payin_net", "payin_reward", "payin_scheme")
+    if any(rule.get(f) is not None for f in rate_fields):
+        return False
+
+    for slab in rule.get("slabs") or []:
+        if any(slab.get(f) is not None for f in ("payin_od", "payin_tp", "payin_net", "slab_from", "slab_to")):
+            return False
+
+    return True
+
+
 def parse_tiered_rate_text(text: Any) -> Optional[List[Tuple[Optional[int], Optional[int], float]]]:
     """
     Detects vehicle-age-tiered text packed into a single pivot cell, e.g.
@@ -178,6 +210,15 @@ def parse_tiered_rate_text(text: Any) -> Optional[List[Tuple[Optional[int], Opti
         tiers.append((age_from, age_to, float(m_pct.group(1))))
 
     return tiers if len(tiers) >= 2 else None
+
+
+# Header keywords that name a tier/band/discount concept but may not match any
+# mapping_engine synonym exactly (e.g. a lone "Slab" or "Discount Band" header).
+# Used by _classify_columns to keep such a column's text flowing into the parse
+# instead of being dropped as UNKNOWN.
+SLAB_HINT_KEYWORDS = [
+    "slab", "tier", "band", "discount", "premium slab", "si slab",
+]
 
 
 # Known locations in Indian insurance grids
@@ -334,16 +375,16 @@ class ExcelParserService:
         for idx, h in enumerate(headers):
             h_clean = h.strip().lower()
             words = [w.strip() for w in h_clean.replace("-", " ").replace("/", " ").replace("(", " ").replace(")", " ").split()]
-            
+
             # Match standard field synonyms using Phase-based approach
             matched_param = None
-            
+
             # Phase 1: Exact match scan
             for std, syns in self.mapper.mappings.items():
                 if h_clean in syns:
                     matched_param = std
                     break
-            
+
             # Phase 2: Specific substring match (longest matching synonym wins)
             if not matched_param:
                 best_syn_len = -1
@@ -363,7 +404,7 @@ class ExcelParserService:
                 if w in STATES_LIST:
                     matched_location = STATE_ABBR_MAP.get(w, w.upper())
                     break
-                    
+
             if matched_location:
                 classifications.append({
                     "index": idx,
@@ -377,6 +418,20 @@ class ExcelParserService:
                     "header": h,
                     "type": "RATE" if matched_param.startswith("payin_") or matched_param.startswith("payout_") or matched_param.startswith("slab_") or matched_param in ("payin_type", "premium_type") else "PARAM",
                     "field": matched_param
+                })
+            elif any(kw in h_clean for kw in SLAB_HINT_KEYWORDS):
+                # A column that names a tier/band/discount concept but doesn't match
+                # any known synonym (e.g. a lone "Slab"/"Discount Band" header) would
+                # otherwise be dropped entirely as UNKNOWN — its cell text never even
+                # reaching raw_json — leaving slab_from/slab_to with nothing to parse
+                # a boundary out of. Route it through the PARAM pipeline under a
+                # synthetic field so classify_rule_type/extract_numeric_range can
+                # still use its text as a slab-boundary fallback.
+                classifications.append({
+                    "index": idx,
+                    "header": h,
+                    "type": "PARAM",
+                    "field": "_slab_hint_text"
                 })
             else:
                 classifications.append({
@@ -489,10 +544,64 @@ class ExcelParserService:
             # Assign headers as column names to make it readable in row Series
             df_sliced = df.iloc[data_start_idx:].copy()
             df_sliced.columns = headers
-            
-            # Parse rows
-            sheet_rules_count = 0
-            for r_idx, row in df_sliced.iterrows():
+
+            sheet_rules_count = self._process_flat_rows(
+                df_sliced, headers, classifications, is_pivot, sheet_name, filename, company,
+                existing_keys, all_parsed_rules
+            )
+            print(f"    [SHEET COMPLETED] Extracted {sheet_rules_count} rules from '{sheet_name}'.")
+
+        final_rules = self._group_and_merge_rules(all_parsed_rules)
+        return final_rules
+
+    def parse_table(
+        self, headers: List[str], rows: List[List[Any]], sheet_name: str,
+        filename: Optional[str], company: str, existing_keys: set,
+        all_parsed_rules: List[Dict[str, Any]]
+    ) -> int:
+        """
+        Classifies and parses an already-tabular data source (one row = one rule,
+        e.g. a Word table or a PDF table) through the same column-classification and
+        normalization pipeline used for Excel FLAT/PIVOT sheets. Appends parsed rule
+        dicts into all_parsed_rules (shared across every table/page in the document,
+        so the caller can run one document-wide _group_and_merge_rules pass at the end).
+        Returns the number of rules extracted from this table.
+        """
+        if not headers or not rows:
+            return 0
+
+        clean_headers = [str(h).strip() if h is not None and str(h).strip() else f"Unnamed_{i}" for i, h in enumerate(headers)]
+        df = pd.DataFrame(rows, columns=clean_headers)
+
+        classifications = self._classify_columns(clean_headers)
+        locations = [c for c in classifications if c["type"] == "LOCATION"]
+        params = [c for c in classifications if c["type"] == "PARAM"]
+        rates = [c for c in classifications if c["type"] == "RATE"]
+
+        if not params and not rates and not locations:
+            return 0
+
+        is_pivot = len(locations) > 3
+        return self._process_flat_rows(
+            df, clean_headers, classifications, is_pivot, sheet_name, filename, company,
+            existing_keys, all_parsed_rules
+        )
+
+    def _process_flat_rows(
+        self, df_sliced: pd.DataFrame, headers: List[str], classifications: List[Dict[str, Any]],
+        is_pivot: bool, sheet_name: str, filename: Optional[str], company: str,
+        existing_keys: set, all_parsed_rules: List[Dict[str, Any]]
+    ) -> int:
+        """
+        Parses each data row of an already-tabular, header-classified dataset into rule dict(s),
+        appending them to all_parsed_rules. Shared by Excel FLAT/PIVOT sheets and by the
+        Word/PDF table parsers (which are inherently one-row-per-rule, i.e. FLAT).
+        """
+        locations = [c for c in classifications if c["type"] == "LOCATION"]
+        params = [c for c in classifications if c["type"] == "PARAM"]
+        rates = [c for c in classifications if c["type"] == "RATE"]
+        sheet_rules_count = 0
+        for r_idx, row in df_sliced.iterrows():
                 # Check ignore
                 if self._is_ignored_row(row, headers):
                     continue
@@ -715,7 +824,12 @@ class ExcelParserService:
                         
                         if slab_from is None and slab_to is None:
                             slab_from, slab_to = extract_numeric_range(rule_data.get("sub_class") or rule_data.get("product"))
-                            
+                        if slab_from is None and slab_to is None:
+                            # Last resort: a column that named a tier/band/discount
+                            # concept but wasn't a recognized synonym (see
+                            # SLAB_HINT_KEYWORDS / _classify_columns).
+                            slab_from, slab_to = extract_numeric_range(param_vals.get("_slab_hint_text"))
+
                         payin_type = str(flat_rates.get("payin_type")).strip() if flat_rates.get("payin_type") is not None else "PERCENTAGE"
                         premium_type = str(flat_rates.get("premium_type")).strip() if flat_rates.get("premium_type") is not None else None
                         
@@ -761,9 +875,15 @@ class ExcelParserService:
                         
                     all_parsed_rules.append(rule_data)
                     sheet_rules_count += 1
-            
-            print(f"    [SHEET COMPLETED] Extracted {sheet_rules_count} rules from '{sheet_name}'.")
 
+        return sheet_rules_count
+
+    def _group_and_merge_rules(self, all_parsed_rules: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Collapses business-identical rows into one, and folds genuinely-differing
+        rate rows sharing the same business key into a single SLAB rule with
+        nested tiers. Shared by Excel workbook parsing and the Word/PDF parsers.
+        """
         # --- GROUP & MERGE RULES ENGINE ---
         grouped_rules: Dict[Tuple, List[Dict[str, Any]]] = {}
         for r in all_parsed_rules:
@@ -826,6 +946,32 @@ class ExcelParserService:
                 merged_slabs = []
                 for rule_item in group:
                     if rule_item.get("slabs"):
+                        for existing_slab in rule_item["slabs"]:
+                            if existing_slab.get("slab_from") is None and existing_slab.get("slab_to") is None:
+                                # This tier's boundary never got captured upstream —
+                                # retry the same text fallbacks used for the
+                                # no-slabs-yet branch below, instead of silently
+                                # carrying forward a null/null tier (which the
+                                # serializer would otherwise paint with an
+                                # identical placeholder range for every such tier).
+                                retry_from, retry_to = extract_numeric_range(
+                                    rule_item.get("sub_class") or rule_item.get("product")
+                                )
+                                if retry_from is None and retry_to is None:
+                                    # Only consider raw_json entries whose ORIGINAL
+                                    # COLUMN HEADER looks slab-related — retrying
+                                    # against arbitrary columns (a date, an Sr No)
+                                    # would misparse them into a bogus range, which
+                                    # is worse than leaving the tier boundary null.
+                                    raw = rule_item.get("raw_json") or {}
+                                    for header_text, v in raw.items():
+                                        if not any(kw in str(header_text).lower() for kw in SLAB_HINT_KEYWORDS):
+                                            continue
+                                        retry_from, retry_to = extract_numeric_range(v)
+                                        if retry_from is not None or retry_to is not None:
+                                            break
+                                existing_slab["slab_from"] = retry_from
+                                existing_slab["slab_to"] = retry_to
                         merged_slabs.extend(rule_item["slabs"])
                     else:
                         slab_obj = {

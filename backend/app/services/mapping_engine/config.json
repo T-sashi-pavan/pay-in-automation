@@ -38,7 +38,7 @@
     
     "payin_type": ["payin type", "payin_type", "commission type", "pay-in type"],
     "premium_type": ["premium type", "premium_type", "type of premium", "premium basis"],
-    "slab_from": ["slab from", "slab_from", "limit from", "from", "range from", "min slab", "premium from", "idv from", "idv_from", "idv slab from", "cc", "cc range"],
-    "slab_to": ["slab to", "slab_to", "limit to", "to", "range to", "max slab", "premium to", "idv to", "idv_to", "idv slab to"]
+    "slab_from": ["slab from", "slab_from", "limit from", "from", "range from", "min slab", "premium from", "idv from", "idv_from", "idv slab from", "cc", "cc range", "tier from", "band from", "si slab from", "premium band from", "discount band from"],
+    "slab_to": ["slab to", "slab_to", "limit to", "to", "range to", "max slab", "premium to", "idv to", "idv_to", "idv slab to", "tier to", "band to", "si slab to", "premium band to", "discount band to"]
   }
 }

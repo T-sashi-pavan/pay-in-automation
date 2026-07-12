@@ -4,12 +4,14 @@ import { api } from './services/api';
 import { DashboardLayout } from './layouts/DashboardLayout';
 import { Dashboard } from './pages/Dashboard';
 import { CustomiseData } from './pages/CustomiseData';
+import { DashboardHome } from './pages/DashboardHome';
 import { useNotification } from './contexts/NotificationContext';
 
 function App() {
   const queryClient = useQueryClient();
   const { notify } = useNotification();
-  const [activeTab, setActiveTab] = useState<'upload' | 'customise'>('upload');
+  // Nav shows Dashboard first, but the app still lands on Upload Files by default.
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'upload' | 'customise'>('upload');
   const [selectedUploadId, setSelectedUploadId] = useState<number | null>(null);
   const [page, setPage] = useState(1);
 
@@ -147,7 +149,9 @@ function App() {
     <>
       {/* DashboardLayout now only handles sidebar + top nav */}
       <DashboardLayout activeTab={activeTab} onTabChange={setActiveTab}>
-        {activeTab === 'upload' ? (
+        {activeTab === 'dashboard' ? (
+          <DashboardHome />
+        ) : activeTab === 'upload' ? (
           <Dashboard
             /* table data */
             records={recordsData?.records || []}

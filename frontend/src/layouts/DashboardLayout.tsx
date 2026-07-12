@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import {
+  LayoutDashboard,
   UploadCloud,
   Sliders,
   ChevronLeft,
@@ -9,8 +10,8 @@ import {
 import { useSidebar } from '../contexts/SidebarContext';
 
 interface DashboardLayoutProps {
-  activeTab: 'upload' | 'customise';
-  onTabChange: (tab: 'upload' | 'customise') => void;
+  activeTab: 'dashboard' | 'upload' | 'customise';
+  onTabChange: (tab: 'dashboard' | 'upload' | 'customise') => void;
   children: React.ReactNode;
 }
 
@@ -34,6 +35,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ activeTab, onT
   };
 
   const navItems = [
+    { id: 'dashboard' as const, label: 'Dashboard', icon: LayoutDashboard },
     { id: 'upload' as const, label: 'Upload Files', icon: UploadCloud },
     { id: 'customise' as const, label: 'Organise the Data', icon: Sliders },
   ];

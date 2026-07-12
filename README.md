@@ -31,9 +31,29 @@ npm run dev   # http://localhost:5173
 
 ```
 DATABASE_URL=postgresql://user:password@host:5432/dbname
+# Optional — enables reading scanned/image-only PDF uploads via vision-based
+# extraction (an LLM looks at the rendered page directly). Tried in order:
+# Anthropic, OpenAI, Gemini — whichever key is set is used for the document.
+# Without any of these, scanned PDFs fall back to a much less reliable
+# Tesseract-OCR heuristic.
+ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...
+GEMINI_API_KEY=...
+# Optional — cost-safety cap on how many scanned pages per upload get sent to
+# a paid vision API (default 60). Extra pages fall back to Tesseract instead
+# of being silently billed. Every call's token usage is logged to the backend
+# terminal per page and totalled at the end of each upload.
+PDF_VISION_MAX_PAGES=60
 ```
 
 The frontend defaults to `http://localhost:8000/api` in dev — no `.env` needed locally.
+
+Uploads accept `.xlsx`/`.xls`, `.docx`, and `.pdf`. Text-based PDFs and Word
+tables are parsed directly (no extra setup). Scanned/image-only PDFs need
+one of `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`GEMINI_API_KEY` (recommended —
+reliable) or the system Tesseract-OCR binary installed (best-effort fallback,
+not just the `pytesseract` pip package — see
+[UB Mannheim's Windows build](https://github.com/UB-Mannheim/tesseract)).
 
 ## Deploying to Render (Blueprint)
 
@@ -50,6 +70,8 @@ This repo includes a `render.yaml` defining two services: `payin-backend`
    | Service | Env Var | Value |
    |---|---|---|
    | `payin-backend` | `DATABASE_URL` | Your Postgres connection string (e.g. from Neon) |
+   | `payin-backend` | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` | Optional (pick one) — enables reliable scanned-PDF upload extraction. Without any of these, scanned PDFs fall back to a Tesseract-OCR heuristic, which also requires a Docker-based service (not installable via pip alone) — not solved by this blueprint. |
+   | `payin-backend` | `PDF_VISION_MAX_PAGES` | Optional — cost-safety cap on scanned pages sent to the vision API per upload (default 60). |
    | `payin-backend` | `CORS_ORIGINS` | The frontend's Render URL, e.g. `https://payin-frontend.onrender.com` (set *after* step 4) |
    | `payin-frontend` | `VITE_API_BASE_URL` | The backend's Render URL + `/api`, e.g. `https://payin-backend.onrender.com/api` (set *after* step 4) |
 

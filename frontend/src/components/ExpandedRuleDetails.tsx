@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
-import type { CommissionRule } from '../types';
+import { createPortal } from 'react-dom';
+import type { CommissionRule, EditableSlabField } from '../types';
+import { EditableCell } from './EditableCell';
 import {
   Building2,
   Percent,
@@ -11,19 +13,26 @@ import {
   Code,
   ChevronDown,
   ChevronRight,
+  X,
 } from 'lucide-react';
 
 interface ExpandedRuleDetailsProps {
   rule: CommissionRule;
   colCount: number;
+  /** Tier-level editing lives here now — the Slab tab shows one row per rule, not one per tier. */
+  onEditSlab?: (slabId: number, field: EditableSlabField, value: string) => void;
+  /** Closes the panel — required now that it renders as a modal overlay instead of an inline expanded row. */
+  onClose: () => void;
 }
 
-export const ExpandedRuleDetails: React.FC<ExpandedRuleDetailsProps> = ({ rule, colCount }) => {
-  const [activeTab, setActiveTab] = useState<'non-slab' | 'slab'>('non-slab');
-  const [showRawJson, setShowRawJson] = useState(false);
-
+export const ExpandedRuleDetails: React.FC<ExpandedRuleDetailsProps> = ({ rule, colCount: _colCount, onEditSlab, onClose }) => {
   const commissionType = rule.commissionType || rule.commission_type || 'NON_SLAB';
   const slabConfiguration = rule.slabConfiguration !== undefined ? rule.slabConfiguration : (rule.slab_configuration || false);
+
+  // Default to whichever tab actually has data for this rule — a SLAB rule
+  // used to always open on "Non-Slab Details" regardless of its own type.
+  const [activeTab, setActiveTab] = useState<'non-slab' | 'slab'>(commissionType === 'SLAB' ? 'slab' : 'non-slab');
+  const [showRawJson, setShowRawJson] = useState(false);
 
   const businessFields = [
     { label: 'LOB', value: rule.lob },
@@ -56,76 +65,91 @@ export const ExpandedRuleDetails: React.FC<ExpandedRuleDetailsProps> = ({ rule, 
     return val !== null && val !== undefined ? `${val}%` : '-';
   };
 
-  return (
-    <tr>
-      <td colSpan={colCount} className="p-0 bg-slate-50 dark:bg-slate-900/40 border-y border-[#E5E7EB] dark:border-slate-800">
-        {/*
-          Sticky-left + viewport-relative width: the parent row can be very
-          wide (20+ columns, horizontally scrollable), so a centered fixed
-          width box here would render off in the middle of that scroll area
-          — invisible until the user scrolled sideways and often requiring
-          the window to be shrunk to bring it into view. Pinning this panel
-          to the left edge of whatever's currently visible, sized to the
-          viewport instead of the table, means it's always fully visible
-          immediately on expand.
-        */}
-        <div className="sticky left-0 w-[calc(100vw-4rem)] max-w-5xl m-4 rounded-2xl border border-[#E5E7EB] dark:border-slate-800/80 bg-white dark:bg-slate-950/90 overflow-hidden shadow-sm">
+  const modal = (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+      {/* Backdrop — fixed positioning means this panel is always centered on
+          the actual viewport, completely independent of the table's own
+          width/scroll state (the old sticky-in-table-cell approach was
+          unreliable and still required shrinking the window in practice). */}
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
 
-          {/* Tabs Navigation */}
-          <div className="flex items-center justify-between border-b border-[#E5E7EB] dark:border-slate-800/80 bg-slate-50 dark:bg-slate-900/30 px-6 py-3">
-            <div className="flex items-center gap-3">
+      <div className="relative w-full max-w-5xl max-h-[90vh] flex flex-col rounded-2xl border border-[#E5E7EB] dark:border-slate-800/80 bg-white dark:bg-slate-950 overflow-hidden shadow-2xl">
+
+        {/* Tabs Navigation */}
+        <div className="flex-shrink-0 flex items-center justify-between border-b border-[#E5E7EB] dark:border-slate-800/80 bg-slate-50 dark:bg-slate-900/30 px-6 py-3">
+          <div className="flex items-center gap-3">
+            <div className="relative group inline-block">
               <button
                 type="button"
-                onClick={() => setActiveTab('non-slab')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-colors duration-150 cursor-pointer ${
-                  activeTab === 'non-slab'
-                    ? 'bg-[#4F46E5] text-white'
-                    : 'bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700/80 text-slate-600 dark:text-slate-300 border border-[#E5E7EB] dark:border-slate-700/60'
+                onClick={() => commissionType !== 'SLAB' && setActiveTab('non-slab')}
+                disabled={commissionType === 'SLAB'}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-colors duration-150 ${
+                  commissionType === 'SLAB'
+                    ? 'bg-slate-50 dark:bg-slate-900/40 text-slate-300 dark:text-slate-600 border border-[#E5E7EB] dark:border-slate-900 cursor-not-allowed'
+                    : activeTab === 'non-slab'
+                    ? 'bg-[#4F46E5] text-white cursor-pointer'
+                    : 'bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700/80 text-slate-600 dark:text-slate-300 border border-[#E5E7EB] dark:border-slate-700/60 cursor-pointer'
                 }`}
+                title={commissionType === 'SLAB' ? 'This rule uses slab-based commission — no flat rates configured' : ''}
               >
                 <ClipboardList className="w-3.5 h-3.5" />
                 Non-Slab Details
               </button>
 
-              <div className="relative group inline-block">
-                <button
-                  type="button"
-                  onClick={() => commissionType === 'SLAB' && setActiveTab('slab')}
-                  disabled={commissionType !== 'SLAB'}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-colors duration-150 ${
-                    commissionType !== 'SLAB'
-                      ? 'bg-slate-50 dark:bg-slate-900/40 text-slate-300 dark:text-slate-600 border border-[#E5E7EB] dark:border-slate-900 cursor-not-allowed'
-                      : activeTab === 'slab'
-                      ? 'bg-[#4F46E5] text-white cursor-pointer'
-                      : 'bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700/80 text-slate-600 dark:text-slate-300 border border-[#E5E7EB] dark:border-slate-700/60 cursor-pointer'
-                  }`}
-                  title={commissionType !== 'SLAB' ? 'No slab configuration available' : ''}
-                >
-                  <Layers className="w-3.5 h-3.5" />
-                  Slab Details
-                </button>
-
-                {commissionType !== 'SLAB' && (
-                  <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 scale-0 group-hover:scale-100 transition-all duration-100 origin-bottom bg-slate-900 dark:bg-slate-950 text-slate-300 dark:text-slate-400 text-[10px] py-1.5 px-3 rounded-lg border border-slate-800 whitespace-nowrap z-30 pointer-events-none shadow-lg">
-                    No slab configuration available
-                  </div>
-                )}
-              </div>
+              {commissionType === 'SLAB' && (
+                <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 scale-0 group-hover:scale-100 transition-all duration-100 origin-bottom bg-slate-900 dark:bg-slate-950 text-slate-300 dark:text-slate-400 text-[10px] py-1.5 px-3 rounded-lg border border-slate-800 whitespace-nowrap z-30 pointer-events-none shadow-lg">
+                  This rule uses slab-based commission — no flat rates configured
+                </div>
+              )}
             </div>
 
-            <div className="flex items-center gap-2">
-              <span className={`text-[10px] font-extrabold px-3 py-1 rounded-full uppercase tracking-widest ${
-                commissionType === 'SLAB'
-                  ? 'bg-purple-50 dark:bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-200 dark:border-purple-500/25'
-                  : 'bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-500/25'
-              }`}>
-                {commissionType === 'SLAB' ? 'Slab' : 'Non-Slab'} Structure
-              </span>
+            <div className="relative group inline-block">
+              <button
+                type="button"
+                onClick={() => commissionType === 'SLAB' && setActiveTab('slab')}
+                disabled={commissionType !== 'SLAB'}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-colors duration-150 ${
+                  commissionType !== 'SLAB'
+                    ? 'bg-slate-50 dark:bg-slate-900/40 text-slate-300 dark:text-slate-600 border border-[#E5E7EB] dark:border-slate-900 cursor-not-allowed'
+                    : activeTab === 'slab'
+                    ? 'bg-[#4F46E5] text-white cursor-pointer'
+                    : 'bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700/80 text-slate-600 dark:text-slate-300 border border-[#E5E7EB] dark:border-slate-700/60 cursor-pointer'
+                }`}
+                title={commissionType !== 'SLAB' ? 'No slab configuration available' : ''}
+              >
+                <Layers className="w-3.5 h-3.5" />
+                Slab Details
+              </button>
+
+              {commissionType !== 'SLAB' && (
+                <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 scale-0 group-hover:scale-100 transition-all duration-100 origin-bottom bg-slate-900 dark:bg-slate-950 text-slate-300 dark:text-slate-400 text-[10px] py-1.5 px-3 rounded-lg border border-slate-800 whitespace-nowrap z-30 pointer-events-none shadow-lg">
+                  No slab configuration available
+                </div>
+              )}
             </div>
           </div>
 
-          <div className="p-6">
-            
+          <div className="flex items-center gap-2">
+            <span className={`text-[10px] font-extrabold px-3 py-1 rounded-full uppercase tracking-widest ${
+              commissionType === 'SLAB'
+                ? 'bg-purple-50 dark:bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-200 dark:border-purple-500/25'
+                : 'bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-500/25'
+            }`}>
+              {commissionType === 'SLAB' ? 'Slab' : 'Non-Slab'} Structure
+            </span>
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-1.5 rounded-lg text-slate-400 dark:text-slate-500 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              title="Close"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        <div className="p-6 overflow-y-auto">
+
             {/* NON-SLAB TAB CONTENT */}
             {activeTab === 'non-slab' && (
               <div className="space-y-6">
@@ -222,25 +246,49 @@ export const ExpandedRuleDetails: React.FC<ExpandedRuleDetailsProps> = ({ rule, 
                       <table className="min-w-full divide-y divide-[#E5E7EB] dark:divide-slate-800">
                         <thead className="bg-slate-100 dark:bg-slate-900/40">
                           <tr>
+                            <th className="px-4 py-2.5 text-left text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider whitespace-nowrap">Tier</th>
                             {['Pay-In Type', 'Premium Type', 'Pay-In Slab From', 'Pay-In Slab Upto', 'Pay-In OD', 'Payout OD', 'Pay-In TP', 'Payout TP', 'Pay-In Net', 'Payout Net'].map(h => (
                               <th key={h} className="px-4 py-2.5 text-left text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
                             ))}
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-[#E5E7EB]/70 dark:divide-slate-800/40">
-                          {rule.slabs.map((slab) => (
-                            <tr key={slab.id} className="hover:bg-slate-100 dark:hover:bg-slate-900/20 transition-colors">
-                              <td className="px-4 py-2.5 text-xs font-bold text-[#4F46E5] dark:text-indigo-300">{slab.payin_type || 'N/A'}</td>
-                              <td className="px-4 py-2.5 text-xs text-slate-700 dark:text-slate-300">{slab.premium_type || 'N/A'}</td>
-                              <td className="px-4 py-2.5 text-xs text-slate-800 dark:text-slate-200 font-mono">{slab.slab_from !== null ? slab.slab_from.toLocaleString() : '0'}</td>
-                              <td className="px-4 py-2.5 text-xs text-slate-800 dark:text-slate-200 font-mono">{slab.slab_to !== null ? slab.slab_to.toLocaleString() : '∞'}</td>
-                              {[slab.payin_od, slab.payout_od, slab.payin_tp, slab.payout_tp, slab.payin_net, slab.payout_net].map((v, i) => (
-                                <td key={i} className={`px-4 py-2.5 text-xs font-bold text-right ${i % 2 === 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
-                                  {formatPercentage(v)}
+                          {rule.slabs.map((slab, tierIdx) => {
+                            const editSlab = (field: EditableSlabField, value: string) => onEditSlab?.(slab.id, field, value);
+                            return (
+                              <tr key={slab.id} className="hover:bg-slate-100 dark:hover:bg-slate-900/20 transition-colors">
+                                <td className="px-4 py-2.5">
+                                  <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-[#4F46E5]/10 dark:bg-indigo-500/10 text-[#4F46E5] dark:text-indigo-300 text-xs font-extrabold">
+                                    {tierIdx + 1}
+                                  </span>
                                 </td>
-                              ))}
-                            </tr>
-                          ))}
+                                <td className="px-4 py-2.5 text-xs font-bold text-[#4F46E5] dark:text-indigo-300">
+                                  <EditableCell label="Pay-In Type" value={slab.payin_type} displayValue={<span>{slab.payin_type || 'N/A'}</span>} onSave={(v) => editSlab('payin_type', v)} disabled={!onEditSlab} />
+                                </td>
+                                <td className="px-4 py-2.5 text-xs text-slate-700 dark:text-slate-300">
+                                  <EditableCell label="Premium Type" value={slab.premium_type} displayValue={<span>{slab.premium_type || 'N/A'}</span>} onSave={(v) => editSlab('premium_type', v)} disabled={!onEditSlab} />
+                                </td>
+                                <td className="px-4 py-2.5 text-xs text-slate-800 dark:text-slate-200 font-mono">
+                                  <EditableCell label="Pay-In Slab From" value={slab.slab_from} fieldType="number" displayValue={<span>{slab.slab_from !== null ? slab.slab_from.toLocaleString() : '0'}</span>} onSave={(v) => editSlab('slab_from', v)} disabled={!onEditSlab} />
+                                </td>
+                                <td className="px-4 py-2.5 text-xs text-slate-800 dark:text-slate-200 font-mono">
+                                  <EditableCell label="Pay-In Slab Upto" value={slab.slab_to} fieldType="number" displayValue={<span>{slab.slab_to !== null ? slab.slab_to.toLocaleString() : '∞'}</span>} onSave={(v) => editSlab('slab_to', v)} disabled={!onEditSlab} />
+                                </td>
+                                <td className="px-4 py-2.5 text-xs font-bold text-right text-emerald-600 dark:text-emerald-400">
+                                  <EditableCell label="Pay-In OD" value={slab.payin_od} fieldType="number" displayValue={<span>{formatPercentage(slab.payin_od)}</span>} onSave={(v) => editSlab('payin_od', v)} disabled={!onEditSlab} className="justify-end" />
+                                </td>
+                                <td className="px-4 py-2.5 text-xs font-bold text-right text-amber-600 dark:text-amber-400">{formatPercentage(slab.payout_od)}</td>
+                                <td className="px-4 py-2.5 text-xs font-bold text-right text-emerald-600 dark:text-emerald-400">
+                                  <EditableCell label="Pay-In TP" value={slab.payin_tp} fieldType="number" displayValue={<span>{formatPercentage(slab.payin_tp)}</span>} onSave={(v) => editSlab('payin_tp', v)} disabled={!onEditSlab} className="justify-end" />
+                                </td>
+                                <td className="px-4 py-2.5 text-xs font-bold text-right text-amber-600 dark:text-amber-400">{formatPercentage(slab.payout_tp)}</td>
+                                <td className="px-4 py-2.5 text-xs font-bold text-right text-emerald-600 dark:text-emerald-400">
+                                  <EditableCell label="Pay-In Net" value={slab.payin_net} fieldType="number" displayValue={<span>{formatPercentage(slab.payin_net)}</span>} onSave={(v) => editSlab('payin_net', v)} disabled={!onEditSlab} className="justify-end" />
+                                </td>
+                                <td className="px-4 py-2.5 text-xs font-bold text-right text-amber-600 dark:text-amber-400">{formatPercentage(slab.payout_net)}</td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
@@ -290,7 +338,8 @@ export const ExpandedRuleDetails: React.FC<ExpandedRuleDetailsProps> = ({ rule, 
           </div>
 
         </div>
-      </td>
-    </tr>
+      </div>
   );
+
+  return createPortal(modal, document.body);
 };

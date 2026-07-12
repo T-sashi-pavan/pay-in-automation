@@ -123,6 +123,28 @@ export const api = {
     return response.data;
   },
 
+  /** Aggregated read-only counts for the Dashboard overview page. */
+  getDashboardSummary: async (): Promise<{
+    total_uploads: number;
+    total_rules: number;
+    slab_rules: number;
+    non_slab_rules: number;
+    valid_rules: number;
+    warning_rules: number;
+    insurer_breakdown: { insurer: string; count: number }[];
+    recent_uploads: {
+      id: number;
+      filename: string;
+      company: string | null;
+      status: string;
+      total_records: number;
+      uploaded_at: string | null;
+    }[];
+  }> => {
+    const response = await apiClient.get('/dashboard-summary');
+    return response.data;
+  },
+
   /** Read-only lookup dictionary for edit-popover autosuggest (not a hard enum). */
   getMasterList: async (kind: 'states' | 'products' | 'vehicle-types' | 'policy-types'): Promise<MasterListItem[]> => {
     const response = await apiClient.get<MasterListItem[]>(`/master/${kind}`);

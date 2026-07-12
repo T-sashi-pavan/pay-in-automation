@@ -12,6 +12,8 @@ from backend.app.models.upload_history import UploadHistory
 from backend.app.models.commission_rule import CommissionRule
 from backend.app.models.slab_detail import SlabDetail
 from backend.app.services.excel_parser.parser import ExcelParserService
+from backend.app.services.docx_parser.parser import DocxParserService
+from backend.app.services.pdf_parser.parser import PdfParserService
 from backend.app.services.rule_serializer import serialize_commission_rule
 
 router = APIRouter(prefix="/api")
@@ -22,14 +24,18 @@ UPLOAD_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..",
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 excel_parser_service = ExcelParserService()
+docx_parser_service = DocxParserService()
+pdf_parser_service = PdfParserService()
+
+SUPPORTED_EXTENSIONS = (".xlsx", ".xls", ".docx", ".pdf")
 
 @router.post("/upload")
 async def upload_excel(
     file: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
-    if not (file.filename.endswith(".xlsx") or file.filename.endswith(".xls")):
-        raise HTTPException(status_code=400, detail="Unsupported file format. Please upload .xlsx or .xls files.")
+    if not file.filename.lower().endswith(SUPPORTED_EXTENSIONS):
+        raise HTTPException(status_code=400, detail="Unsupported file format. Please upload .xlsx, .xls, .docx, or .pdf files.")
 
     # Create temporary file path
     unique_filename = f"{uuid.uuid4()}_{file.filename}"
@@ -59,14 +65,30 @@ async def upload_excel(
         with open(file_path, "rb") as f:
             file_bytes = f.read()
 
-        parsed_rules = excel_parser_service.parse_workbook(file_bytes, filename=file.filename)
+        filename_lower = file.filename.lower()
+        if filename_lower.endswith(".docx"):
+            parsed_rules = docx_parser_service.parse_document(file_bytes, filename=file.filename)
+        elif filename_lower.endswith(".pdf"):
+            parsed_rules = pdf_parser_service.parse_pdf(file_bytes, filename=file.filename)
+        else:
+            parsed_rules = excel_parser_service.parse_workbook(file_bytes, filename=file.filename)
 
         if not parsed_rules:
-            # Update status to failed if no rules could be parsed
+            # Update status to failed if no rules could be parsed. For scanned
+            # PDFs this also fires when OCR ran but produced no usable data
+            # (every extracted row was empty/unreadable) — surfaced as a clear
+            # failure instead of silently storing garbage rows.
             upload_history.status = "FAILED"
             upload_history.company = "N/A"
             db.commit()
-            raise HTTPException(status_code=422, detail="No valid commission tables detected in the workbook.")
+            detail = "No valid commission tables detected in the file."
+            if filename_lower.endswith(".pdf"):
+                detail = (
+                    "Could not extract readable commission data from this PDF. If it's a scanned/image-based "
+                    "PDF, OCR was attempted but produced no usable rows — this can happen on dense or irregular "
+                    "table layouts. Try a text-based PDF, a Word/Excel version, or a manually prepared spreadsheet."
+                )
+            raise HTTPException(status_code=422, detail=detail)
 
         # Detect primary insurer from parsed rules
         detected_company = "Unknown Insurer"
@@ -144,6 +166,74 @@ async def upload_excel(
         if os.path.exists(file_path):
             os.remove(file_path)
         raise HTTPException(status_code=500, detail=f"Database or parsing error: {str(e)}")
+
+
+@router.get("/dashboard-summary")
+def get_dashboard_summary(db: Session = Depends(get_db)):
+    """
+    Aggregated, read-only counts for the Dashboard overview page — computed with
+    SQL aggregation rather than pulling every row client-side.
+    """
+    from sqlalchemy import func
+
+    try:
+        total_uploads = db.query(UploadHistory).count()
+        total_rules = db.query(CommissionRule).count()
+
+        commission_type_rows = (
+            db.query(CommissionRule.commission_type, func.count(CommissionRule.id))
+            .group_by(CommissionRule.commission_type)
+            .all()
+        )
+        commission_type_counts = {str(ct or "NON_SLAB"): int(cnt) for ct, cnt in commission_type_rows}
+
+        validation_rows = (
+            db.query(CommissionRule.validation_status, func.count(CommissionRule.id))
+            .group_by(CommissionRule.validation_status)
+            .all()
+        )
+        validation_counts = {str(vs or "VALID"): int(cnt) for vs, cnt in validation_rows}
+
+        insurer_rows = (
+            db.query(CommissionRule.insurance_company, func.count(CommissionRule.id))
+            .filter(CommissionRule.insurance_company.isnot(None))
+            .group_by(CommissionRule.insurance_company)
+            .order_by(func.count(CommissionRule.id).desc())
+            .limit(10)
+            .all()
+        )
+        insurer_breakdown = [{"insurer": name, "count": int(cnt)} for name, cnt in insurer_rows]
+
+        recent_uploads = (
+            db.query(UploadHistory)
+            .order_by(desc(UploadHistory.uploaded_at))
+            .limit(8)
+            .all()
+        )
+
+        return {
+            "total_uploads": total_uploads,
+            "total_rules": total_rules,
+            "slab_rules": commission_type_counts.get("SLAB", 0),
+            "non_slab_rules": commission_type_counts.get("NON_SLAB", 0),
+            "valid_rules": validation_counts.get("VALID", 0),
+            "warning_rules": validation_counts.get("WARNING", 0),
+            "insurer_breakdown": insurer_breakdown,
+            "recent_uploads": [
+                {
+                    "id": u.id,
+                    "filename": u.filename,
+                    "company": u.company,
+                    "status": u.status,
+                    "total_records": u.total_records,
+                    "uploaded_at": u.uploaded_at.isoformat() if u.uploaded_at else None,
+                }
+                for u in recent_uploads
+            ],
+        }
+    except Exception as e:
+        logger.error(f"Failed to build dashboard summary: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to load dashboard summary.")
 
 
 @router.get("/uploads")

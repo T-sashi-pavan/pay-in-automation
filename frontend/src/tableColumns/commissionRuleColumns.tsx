@@ -63,74 +63,32 @@ function textCol(
   };
 }
 
-/** Editable cell for a value that lives on the SlabDetail row (Slab tab only), keyed by `slab_id` on the flattened row. */
-function slabTextCol(accessorKey: string, header: string, field: EditableSlabField, opts: ColumnFactoryOptions, valueClassName = 'text-slate-700 dark:text-slate-300', fieldType: EditFieldType = 'text'): ColumnDef<any> {
-  return {
-    accessorKey,
-    header,
-    cell: (info: any) => {
-      const raw = (info.getValue() ?? null) as string | number | null;
-      const slabId = info.row.original.slab_id as number | undefined;
-      return (
-        <EditableCell
-          label={header}
-          value={raw}
-          fieldType={fieldType}
-          disabled={!slabId}
-          displayValue={<span className={valueClassName}>{raw !== null && raw !== undefined && raw !== '' ? String(raw) : 'N/A'}</span>}
-          onSave={(v) => { if (slabId) opts.onEditSlab(slabId, field, v); }}
-        />
-      );
-    },
-  };
-}
-
-function slabRateCol(accessorKey: string, header: string, field: EditableSlabField, opts: ColumnFactoryOptions, direction: 'in' | 'out'): ColumnDef<any> {
-  const colorClass = direction === 'in' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400';
-  return {
-    accessorKey,
-    header,
-    cell: (info: any) => {
-      const raw = (info.getValue() ?? null) as number | null;
-      const slabId = info.row.original.slab_id as number | undefined;
-      const display = <span className={`${colorClass} font-mono`}>{raw !== null ? `${raw}%` : '-'}</span>;
-      // Pay-Out is always 80% of Pay-In, computed server-side — not independently editable.
-      if (direction === 'out') return display;
-      return (
-        <EditableCell
-          label={header}
-          value={raw}
-          fieldType="number"
-          disabled={!slabId}
-          displayValue={display}
-          onSave={(v) => { if (slabId) opts.onEditSlab(slabId, field, v); }}
-        />
-      );
-    },
-  };
-}
-
-/** Slab_from/slab_to are premium/volume boundaries, not percentages — plain numeric formatting. */
-function slabBoundCol(accessorKey: 'slab_from' | 'slab_to', header: string, opts: ColumnFactoryOptions, infinitySymbol: string): ColumnDef<any> {
-  return {
-    accessorKey,
-    header,
-    cell: (info: any) => {
-      const raw = (info.getValue() ?? null) as number | null;
-      const slabId = info.row.original.slab_id as number | undefined;
-      return (
-        <EditableCell
-          label={header}
-          value={raw}
-          fieldType="number"
-          disabled={!slabId}
-          displayValue={<span className="text-slate-700 dark:text-slate-300 font-mono font-bold">{raw !== null ? Number(raw).toLocaleString() : infinitySymbol}</span>}
-          onSave={(v) => { if (slabId) opts.onEditSlab(slabId, accessorKey, v); }}
-        />
-      );
-    },
-  };
-}
+/** Summary of a rule's nested tiers — full detail lives in the expand panel, not in this column. */
+const tiersSummaryColumn: ColumnDef<any> = {
+  id: 'tiers_summary',
+  header: 'Tiers',
+  enableSorting: false,
+  cell: ({ row }) => {
+    const slabs = (row.original.slabs || []) as { slab_from: number | null; slab_to: number | null }[];
+    if (slabs.length === 0) return <span className="text-slate-400 dark:text-slate-600">N/A</span>;
+    const froms = slabs.map(s => s.slab_from).filter((v): v is number => v !== null);
+    const tos = slabs.map(s => s.slab_to).filter((v): v is number => v !== null);
+    const min = froms.length ? Math.min(...froms) : null;
+    const max = tos.length ? Math.max(...tos) : null;
+    return (
+      <span className="inline-flex items-center gap-1.5">
+        <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-purple-50 dark:bg-purple-500/10 text-purple-600 dark:text-purple-400">
+          {slabs.length} tier{slabs.length !== 1 ? 's' : ''}
+        </span>
+        {(min !== null || max !== null) && (
+          <span className="text-xs text-slate-500 dark:text-slate-400 font-mono">
+            {min !== null ? min.toLocaleString() : '-'}–{max !== null ? max.toLocaleString() : '∞'}
+          </span>
+        )}
+      </span>
+    );
+  },
+};
 
 function rateCol(accessorKey: string, header: string, field: EditableRuleField, opts: ColumnFactoryOptions, direction: 'in' | 'out'): ColumnDef<any> {
   const colorClass = direction === 'in' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400';
@@ -282,16 +240,7 @@ export function createSlabColumns(opts: ColumnFactoryOptions): ColumnDef<any>[] 
     vehicleAgeColumn,
     textCol('state', 'State', 'state', opts, 'text-slate-700 dark:text-slate-300 font-medium', 'state_label', opts.stateSuggestions),
     textCol('effective_date', 'Effective Date', 'effective_date', opts, 'text-slate-500 text-xs font-mono', undefined, undefined, 'date'),
-    slabTextCol('payin_type', 'Pay-In Type', 'payin_type', opts, 'font-semibold text-[#4F46E5] dark:text-indigo-300'),
-    slabTextCol('premium_type', 'Premium Type', 'premium_type', opts),
-    slabBoundCol('slab_from', 'Slab From', opts, '-'),
-    slabBoundCol('slab_to', 'Slab Upto', opts, '∞'),
-    slabRateCol('payin_od', 'Pay-In OD', 'payin_od', opts, 'in'),
-    slabRateCol('payout_od', 'Pay-Out OD', 'payout_od', opts, 'out'),
-    slabRateCol('payin_tp', 'Pay-In TP', 'payin_tp', opts, 'in'),
-    slabRateCol('payout_tp', 'Pay-Out TP', 'payout_tp', opts, 'out'),
-    slabRateCol('payin_net', 'Pay-In Net', 'payin_net', opts, 'in'),
-    slabRateCol('payout_net', 'Pay-Out Net', 'payout_net', opts, 'out'),
+    tiersSummaryColumn,
     commissionTypeColumn(opts),
     textCol('remarks', 'Remarks', 'remarks', opts, 'text-slate-500 dark:text-slate-500 text-xs'),
   ];

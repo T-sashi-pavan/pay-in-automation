@@ -138,7 +138,7 @@ export const CustomiseData: React.FC = () => {
     editRuleField.mutate({ ruleId, target: { kind: 'rule', field }, value });
   };
   const handleEditSlab = (slabId: number, field: EditableSlabField, value: string) => {
-    const parentRuleId = slabRows.find(r => r.slab_id === slabId)?.id ?? slabId;
+    const parentRuleId = records.find(r => r.slabs?.some((s: { id: number }) => s.id === slabId))?.id ?? slabId;
     editRuleField.mutate({ ruleId: parentRuleId, target: { kind: 'slab', slabId, field }, value });
   };
 
@@ -207,41 +207,7 @@ export const CustomiseData: React.FC = () => {
 
   const currentTab = filters.commission_type.includes('SLAB') ? 'SLAB' : 'NON_SLAB';
 
-  const slabRows = useMemo(() => {
-    if (currentTab !== 'SLAB') return [];
-    const list: any[] = [];
-    records.forEach(rule => {
-      if (rule.slabs && rule.slabs.length > 0) {
-        rule.slabs.forEach((slab: any) => {
-          list.push({
-            ...rule,
-            slab_id: slab.id,
-            payin_type: slab.payin_type,
-            premium_type: slab.premium_type,
-            slab_from: slab.slab_from,
-            slab_to: slab.slab_to,
-            payin_od: slab.payin_od,
-            payout_od: slab.payout_od,
-            payin_tp: slab.payin_tp,
-            payout_tp: slab.payout_tp,
-            payin_net: slab.payin_net,
-            payout_net: slab.payout_net,
-            payin_reward: null,
-            payout_reward: null,
-            payin_scheme: null,
-            payout_scheme: null,
-          });
-        });
-      } else {
-        list.push(rule);
-      }
-    });
-    return list;
-  }, [records, currentTab]);
-
-  const tableData = useMemo(() => {
-    return currentTab === 'SLAB' ? slabRows : records;
-  }, [currentTab, records, slabRows]);
+  const tableData = records;
 
   const nonSlabColumns = useMemo<ColumnDef<any>[]>(
     () => createNonSlabColumns({
@@ -536,7 +502,7 @@ export const CustomiseData: React.FC = () => {
                       ))}
                     </tr>
                     {expandedRows[row.id] && (
-                      <ExpandedRuleDetails rule={row.original} colCount={columns.length} />
+                      <ExpandedRuleDetails rule={row.original} colCount={columns.length} onEditSlab={handleEditSlab} onClose={() => toggleRowExpanded(row.id)} />
                     )}
                   </React.Fragment>
                 ))}
