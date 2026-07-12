@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import {
   LayoutDashboard,
   UploadCloud,
-  Sliders,
+  // Sliders, — unused while "Organise the Data" is hidden from nav; re-import when restoring it.
   ChevronLeft,
   ChevronRight,
   Layers,
@@ -37,7 +37,8 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ activeTab, onT
   const navItems = [
     { id: 'dashboard' as const, label: 'Dashboard', icon: LayoutDashboard },
     { id: 'upload' as const, label: 'Upload Files', icon: UploadCloud },
-    { id: 'customise' as const, label: 'Organise the Data', icon: Sliders },
+    // "Organise the Data" temporarily hidden from nav — re-add this entry to restore it.
+    // { id: 'customise' as const, label: 'Organise the Data', icon: Sliders },
   ];
 
   const sidebarWidth = collapsed ? COLLAPSED_WIDTH : EXPANDED_WIDTH;
