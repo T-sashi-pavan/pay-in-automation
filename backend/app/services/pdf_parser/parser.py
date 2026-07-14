@@ -1,8 +1,12 @@
 import base64
 import io
 import json
+import logging
+import re
 import os
 import shutil
+
+logger = logging.getLogger(__name__)
 from datetime import date
 from typing import List, Dict, Any, Optional, Tuple
 import pdfplumber
@@ -61,72 +65,101 @@ This application only tracks the MOTOR DEPARTMENT (vehicle insurance) commission
 
 For motor department pages, convert natural language commission circular text and tables into structured CRM records.
 
-SLAB CLASSIFICATION RULES:
-Determine the commission_type ('SLAB' or 'NON_SLAB') based on these rules:
-A record is SLAB only if commission changes based on any of these parameters:
-- Discount
-- Vehicle Age
-- IDV
-- Sum Insured
-- Premium Band
-- CC (Engine capacity)
-- GVW (Gross Vehicle Weight)
-- Threshold
-- Range
-- From / To / Upto / Above / Below / Greater than / Less than / >= / <= / Between / Increment
-Otherwise, classify as NON_SLAB.
+====================================================
+PRODUCT / CLASS / SUB CLASS MAPPING RULES
+====================================================
+- product: Extract the product name explicitly. Do NOT default to "ALL" if any of the following products are mentioned on the page or in the context/header:
+  * Private Car
+  * Two Wheeler (Scooter / Scooter only)
+  * Two Wheeler (Bike / Bike only / Both bike and Scooters)
+  * GCV (Goods Carrying Commercial Vehicle / GCCV)
+  * PCV (Passenger Carrying Commercial Vehicle / PCCV)
+  * Taxi (4 Wheeled PCCV carrying capacity <= 6 passengers)
+  * Tractor (Agricultural Tractor)
+  * Misc (Miscellaneous Class of Vehicle, Harvester, JCB, Harvester/Tractor, etc.)
+  * E-Rickshaw / E-cart
+- class: Extract class name if mentioned, otherwise "ALL".
+- sub_class: Extract subclass/segment details (e.g. carrying capacity, seating capacity, GVW, engine capacity details, e.g. "GCV with GVW > 40000 Kg", "Both Bike and Scooters", "Private Car diesel", "Taxi", "PCV Bus school"). NEVER default to "ALL" if there are specific segments mentioned in the text.
 
-FIELD EXTRACTION RULES:
-- lob: Always "Motor". Ignore Health, Marine, Engineering etc.
-- insurer: Extract name of the insurer company (e.g. "Oriental", "United India", "National", "New India", "ICICI", "Go Digit", "Tata AIG", "Shriram", etc.).
-- product: If explicitly mentioned, store value; otherwise "ALL".
-- sub_product: Extract wherever available. If missing, "NA".
-- policy_type: Comprehensive, Standalone OD, Third Party, Package, Liability, etc. If absent, "ALL".
-- plan_type: Extract plan duration (e.g. 1+1, 1+3, 3+3, 5+5, etc.). If absent, "ALL".
-- file_type: Extract "New", "Renewal", "Rollover", etc. If absent, "ALL".
-- class: Extract vehicle class name (e.g. Private Car, Two Wheeler, Commercial Vehicle, etc.). If absent, "ALL".
-- sub_class: Extract subclass/segment details (e.g. GCV with GVW > 40000 Kg upto 50000 Kg). If absent, "ALL".
-- make: Extract manufacturer (e.g. Maruti, Tata, Hyundai, Mahindra, RE, Bajaj, Hero, Honda). Map to standard uppercase name (e.g., "MARUTI"), otherwise "ALL".
-- model: Extract vehicle model (e.g. Alto 800, Swift, Nexon, Activa, Splendor, Pulsar, Ace, Dost). If absent, "ALL".
-- fuel_type: Petrol, Diesel, Electric, CNG, etc. If absent, "ALL".
-- cpa: CPA status (YES, NO, or ALL). Set to YES if CPA is mentioned as included/with CPA; NO if excluded/without CPA.
-- ncb: NCB status (YES, NO, or ALL). Set to YES if NCB cases or NCB >20% is shown; NO if without NCB/no NCB.
-- vehicle_age: Vehicle age details (e.g. "Brand New", "0-5 years", "Age = 0", "Age >= 1"). If absent, "ALL".
-- partner_type: Channel name like POSP, MISP, Broker, OEM Dealer, etc. If absent, "All Partners".
-- state: Extract every state name or abbreviation (multiple allowed).
-- zone: Extract North, South, East, West, Central, etc. If absent, "ALL".
-- rto: Extract all RTO codes. If absent, "ALL".
-- source: Store the original source paragraph or heading where this rule resides.
-- remarks: Store any unmatched business restrictions, clauses, or footnotes. NEVER discard text.
-- commission_type: "SLAB" or "NON_SLAB" based on slab classification rules.
-- premium_type: Infer from commission text. Set to "OD" (if on OD premium), "TP" (if TP premium), or "NET" (if Net premium). Never assign all three unless explicitly stated.
-- payin_od: Commission OD percentage as a number (e.g. 15.0 or null).
-- payin_tp: Commission TP percentage as a number (e.g. 2.5 or null).
-- payin_net: Commission Net percentage as a number (e.g. 20.0 or null).
-- payout_od: Payout OD percentage as a number if explicitly stated, otherwise null.
-- payout_tp: Payout TP percentage as a number if explicitly stated, otherwise null.
-- payout_net: Payout Net percentage as a number if explicitly stated, otherwise null.
-- payin_reward: Commission Reward percentage if explicitly stated, otherwise null.
-- payout_reward: Payout Reward percentage if explicitly stated, otherwise null.
-- payin_scheme: Commission Scheme percentage if explicitly stated, otherwise null.
-- payout_scheme: Payout Scheme percentage if explicitly stated, otherwise null.
-- explanation: Store the original source paragraph/text (e.g. "Discount upto 30% -> 20% on OD Premium -> 50% on TP Premium") to help users verify extraction.
-- slabs: If commission_type is SLAB, return the array of slab tiers. Otherwise, return an empty array or null.
-  Each slab tier object must contain:
-  - payin_type: "PERCENTAGE" or "FLAT".
-  - premium_type: "OD", "TP", or "NET" (inferred from commission text).
-  - slab_from: Slab start limit (number or string, e.g. 0 or ">30"). Do NOT invent ranges. Keep the original business meaning.
-  - slab_to: Slab end limit (number or string, e.g. 30 or "OPEN").
-  - payin_od: OD rate for this slab tier (number or null).
-  - payin_tp: TP rate for this slab tier (number or null).
-  - payin_net: Net rate for this slab tier (number or null).
-  - payout_od: Payout OD rate if explicitly stated (number or null).
-  - payout_tp: Payout TP rate if explicitly stated (number or null).
-  - payout_net: Payout Net rate if explicitly stated (number or null).
-  - condition_field: The field name the slab is based on (e.g. "Discount", "Vehicle Age", "GVW", "CC", "IDV").
-  - operator: Comparison operator (e.g. ">", "<=", "=", "between", or null).
-  - value: The boundary value if single, or null.
-  - original_text: The original text representing this slab tier (e.g. "Discount upto 30%").
+====================================================
+POLICY TYPE / PLAN TYPE MAPPING RULES
+====================================================
+- policy_type: Extract "Comprehensive" (Package/Package Policy), "Standalone Own Damage" (Standalone OD/SAOD/SOD), "Third Party" (TP/SATP/Liability only). Do not default to "ALL".
+- plan_type: Extract "Package Policy", "Liability Only Policy", "Stand Alone Own Damage Policy", or duration designations (e.g., 1+1, 1+3, 3+3, 5+5). If terms like Package Policy or Stand Alone Own Damage are present in the table headers or rows, write them here. Do not default to "ALL".
+
+====================================================
+NCB & CPA STATUS MAPPING RULES
+====================================================
+- ncb: Extract the exact NCB condition from the text. Look for phrases like "without NCB", "NCB cases only", "with NCB", "Break in >90 days", etc. Do NOT default to "ALL" if there is an NCB condition.
+- cpa: Extract the CPA condition if mentioned. Look for phrases like "with CPA", "without CPA", "Stand Alone CPA", "PA Owner Driver", etc. Do NOT default to "ALL" if mentioned.
+
+====================================================
+STATE, ZONE, AND RTO MAPPING RULES
+====================================================
+- state: Extract all state names or abbreviations (e.g. Kerala, Tamil Nadu, Karnataka, Assam, Madhya Pradesh, Uttarakhand/UK). If the circular lists specific states for a commission rate, extract them.
+- zone: Extract the specific zone (North, South, East, West, Central, etc.) if mentioned.
+- rto: Extract RTO codes or regions if mentioned (e.g. specific RTO codes, locations, or states specific zones).
+
+====================================================
+PREMIUM TYPE RULES
+====================================================
+- premium_type: Extract the premium type this rule applies to.
+  * A row/rule containing only OD commission should have premium_type = "OD".
+  * A row/rule containing TP commission should have premium_type = "TP".
+  * A row/rule containing Net commission should have premium_type = "NET".
+  * NEVER merge OD, TP, and NET into one row if they represent different rules or rates. If a rule specifies both OD and TP rates, split them into separate rules or slabs for each premium type!
+
+====================================================
+SLAB CLASSIFICATION REDESIGN & GROUPING
+====================================================
+A rule should NOT automatically become a slab simply because it contains multiple commission values.
+We only create slab records when valid NUMERICAL slab ranges can actually be generated.
+
+VALID SLAB CONDITIONS (Must be SLAB):
+Only numeric thresholds where numerical ranges can be mapped to slab_from and slab_to (using float bounds or None for open limits) are SLABs.
+Examples:
+- Discount: "Discount up to 30%", "Discount >30% up to 60%", "Discount >60%" -> Slabs: 0-30, 31-60, 61-None.
+- Vehicle Age: "Age=0" -> Slab: 0-0, "Age>=1" -> Slab: 1-None, "1-5 years" -> Slab: 1-5.
+- CC: "<=1000 CC" -> Slab: 0-1000, "1001-1500 CC" -> Slab: 1001-1500, ">1500 CC" -> Slab: 1501-None.
+- IDV: "0-5 lakh" -> Slab: 0-500000, "5-10 lakh" -> Slab: 500000-1000000.
+- SI: "SI > 5 Lakh" -> Slab: 500001-None.
+- GVW: "<=40000 kg" -> Slab: 0-40000, ">40000 kg" -> Slab: 40001-None.
+
+INVALID SLAB CONDITIONS (Must remain NON_SLAB):
+Do NOT create slabs for categorical conditions. They must remain NON_SLAB.
+Examples:
+- "With NCB" / "Without NCB" / "NCB Cases Only"
+- "Good HP1" / "Good HP2"
+- "Fleet" / "Non Fleet"
+- "Partner Type", "Specific Dealer", "Manufacturer"
+- "CPA YES" / "CPA NO"
+- Remarks-based commission, Break-in cases, Renewal only, Roll Over only.
+For these rules:
+- Set commission_type = "NON_SLAB"
+- Store the categorical condition in its matching CRM field (e.g. ncb field, cpa field, partner_type field, remarks, etc.).
+- Never fabricate fake numeric ranges like 1-500000, 1-999999, 1-0, 0-MAX.
+
+====================================================
+SLAB GROUPING AND EXTRACTION RULES (CRITICAL)
+====================================================
+1. Group Tiers under One Rule: If a table, section, or paragraph lists multiple numeric ranges or tiers (such as discount bands, vehicle age bands, CC bands, weight bands) for the same product and subclass, they MUST be extracted as a SINGLE row in the 'rows' array with commission_type = "SLAB".
+   * Place ALL the ranges/tiers in the 'slabs' array of this single row.
+   * Do NOT create separate rows in the 'rows' list for each range/tier.
+   * Example: If there are 3 discount ranges (up to 30%, 30-60%, >60%), they must be returned as 3 objects inside the 'slabs' array of ONE rule row, not 3 separate rows in the main 'rows' array.
+2. Slabs rates matching: For each slab object in the 'slabs' array:
+   * Populate both payin_od and payin_tp if both are specified for that range (e.g. "20% on OD + 50% on TP" -> payin_od = 20.0, payin_tp = 50.0).
+   * Set condition_field to the field name (e.g. "Discount", "Vehicle Age", "CC").
+   * Specify slab_from and slab_to clearly. For example, "up to 30%" -> slab_from = 0, slab_to = 30. ">30% up to 60%" -> slab_from = 30, slab_to = 60. ">60%" -> slab_from = 60, slab_to = "OPEN".
+   * Never output only a single tier rule if the table explicitly contains multiple tiers! Always extract every single range tier in the table.
+
+====================================================
+EXPLANATION PANEL & SOURCE
+====================================================
+- explanation: Every parsed row must contain a detailed explanation of why it was classified as SLAB or NON_SLAB.
+  * If SLAB: Explain exactly why (e.g. "Reason: Detected numeric discount ranges. Original Text: [quote original text] -> Generated Slabs: 0-30, 31-60, 61-MAX").
+  * If NON_SLAB: Explain why (e.g. "Stored as NON_SLAB. Reason: Commission depends on NCB status. No numeric slab boundaries exist. Mapped to NCB Status. Original Text: [quote original text]").
+- source: Always preserve the COMPLETE original paragraph used for parsing. Never shorten or truncate it. Keep the full text so the user can easily trace and verify the rules.
+- remarks: Capture any other footnotes, exclusions, or rules. Never discard remarks text.
 """
 
 EXTRACTION_TOOL_SCHEMA = {
@@ -386,12 +419,22 @@ class PdfParserService:
         all_parsed_rules: List[Dict[str, Any]] = []
         existing_keys: set = set()
         usage = {
-            "provider": None, "pages_sent": 0, "input_tokens": 0, "output_tokens": 0,
-            "total_tokens": 0, "pages_capped": 0, "errors": 0,
+            "provider": None,
+            "pages_sent": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "pages_capped": 0,
+            "errors": 0,
+            "remaining_tokens": "N/A",
+            "remaining_requests": "N/A",
+            "limit_tokens": "N/A",
+            "limit_requests": "N/A"
         }
 
         with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-            print(f"\n[STARTING PDF PARSING] '{filename}' — {len(pdf.pages)} page(s) detected")
+            total_pages = len(pdf.pages)
+            logger.info(f"[PDF START] Parsing '{filename}' - Total pages: {total_pages}")
 
             for page_idx, page in enumerate(pdf.pages):
                 page_num = page_idx + 1
@@ -399,52 +442,205 @@ class PdfParserService:
 
                 if usage["pages_sent"] >= PDF_VISION_MAX_PAGES:
                     usage["pages_capped"] += 1
-                    print(f"  [COST GUARD] Page {page_num} skipped — reached PDF_VISION_MAX_PAGES={PDF_VISION_MAX_PAGES} for this upload.")
+                    logger.warning(f"  [COST GUARD] Page {page_num} skipped — reached PDF_VISION_MAX_PAGES={PDF_VISION_MAX_PAGES} limit.")
                     continue
 
                 count = -1
                 if text.strip():
+                    logger.info(f"  [PAGE START] Page {page_num}/{total_pages} - Analyzing text content...")
                     count = self._llm_text_extract_page(
                         text, page_idx, filename, company, existing_keys, all_parsed_rules, usage
                     )
                     if count >= 0:
-                        print(f"  [TABLE COMPLETED] Extracted {count} rules from Page {page_num} via text LLM.")
+                        logger.info(f"  [PAGE COMPLETED] Page {page_num}/{total_pages} - Extracted {count} rules via text LLM.")
                         continue
 
+                logger.info(f"  [PAGE START] Page {page_num}/{total_pages} - Analyzing scanned/image content via Vision...")
                 count = self._llm_vision_extract_page(
                     file_bytes, page_idx, filename, company, existing_keys, all_parsed_rules, usage
                 )
                 if count >= 0:
-                    print(f"  [TABLE COMPLETED] Extracted {count} rules from Page {page_num} via vision LLM.")
+                    logger.info(f"  [PAGE COMPLETED] Page {page_num}/{total_pages} - Extracted {count} rules via vision LLM.")
                 else:
                     ocr_table = self._ocr_page_table(file_bytes, page_idx)
                     if not ocr_table or len(ocr_table) < 2:
-                        print(f"  [PAGE SKIP] Page {page_num} is scanned and OCR could not reconstruct a table.")
+                        logger.warning(f"  [PAGE SKIP] Page {page_num}/{total_pages} - Scanned page, OCR could not reconstruct tables.")
                         continue
                     headers, data_rows = ocr_table[0], ocr_table[1:]
                     sheet_name = f"Page {page_num} (OCR)"
                     count = self.excel_parser.parse_table(
                         headers, data_rows, sheet_name, filename, company, existing_keys, all_parsed_rules
                     )
-                    print(f"  [TABLE COMPLETED] Extracted {count} rules from '{sheet_name}' via OCR.")
+                    logger.info(f"  [PAGE COMPLETED] Page {page_num}/{total_pages} - Extracted {count} rules from '{sheet_name}' via OCR.")
+
+        # Perform PDF-specific grouping to merge slabs split across different rows/bullets
+        all_parsed_rules = self._group_and_merge_pdf_rules(all_parsed_rules)
 
         final_rules = self.excel_parser._group_and_merge_rules(all_parsed_rules)
         before = len(final_rules)
-        final_rules = [r for r in final_rules if not is_rule_effectively_empty(r)]
+        final_rules = [r for r in final_rules if not is_rule_effectively_empty(r) and not self._is_rule_empty_of_rates(r)]
         dropped = before - len(final_rules)
         if dropped:
-            print(f"  [DATA QUALITY] Dropped {dropped} rule(s) with no usable data.")
+            logger.info(f"  [DATA QUALITY] Dropped {dropped} empty/invalid rule(s) from parsed output.")
 
         if usage["pages_sent"] > 0:
-            print(
-                f"\n[LLM USAGE] provider={usage['provider']} | pages_sent={usage['pages_sent']} "
-                f"| errors={usage['errors']} | pages_capped={usage['pages_capped']}\n"
-                f"  input_tokens={usage['input_tokens']:,} | output_tokens={usage['output_tokens']:,} "
-                f"| total_tokens={usage['total_tokens']:,}\n"
+            logger.info(
+                f"\n[LLM SUMMARY] provider={usage['provider']} | pages_sent={usage['pages_sent']} | errors={usage['errors']}\n"
+                f"  Cumulative Token Usage: input_tokens={usage['input_tokens']:,} | output_tokens={usage['output_tokens']:,} | total_tokens={usage['total_tokens']:,}\n"
+                f"  Rate Limit Status: remaining_tokens={usage['remaining_tokens']} | remaining_requests={usage['remaining_requests']} | limit_tokens={usage['limit_tokens']} | limit_requests={usage['limit_requests']}\n"
             )
 
-        print(f"[PDF PARSING COMPLETED] Grouped {len(all_parsed_rules)} rules into {len(final_rules)} merged rules.")
+        logger.info(f"[PDF COMPLETED] Successfully parsed {filename}. Grouped {len(all_parsed_rules)} rules into {len(final_rules)} merged rules.")
         return final_rules
+
+    def _is_rule_empty_of_rates(self, rule: Dict[str, Any]) -> bool:
+        rate_fields = ("payin_od", "payin_tp", "payin_net", "payin_reward", "payin_scheme")
+        if any(rule.get(f) is not None for f in rate_fields):
+            return False
+            
+        for slab in rule.get("slabs") or []:
+            if any(slab.get(f) is not None for f in ("payin_od", "payin_tp", "payin_net")):
+                return False
+                
+        return True
+
+    def _group_and_merge_pdf_rules(self, rules: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if not rules:
+            return []
+            
+        grouped: Dict[Tuple, List[Dict[str, Any]]] = {}
+        for r in rules:
+            key = (
+                str(r.get("lob") or "").strip().upper(),
+                str(r.get("file_type") or "").strip().upper(),
+                str(r.get("insurance_company") or "").strip().upper(),
+                str(r.get("product") or "").strip().upper(),
+                str(r.get("policy_type") or "").strip().upper(),
+                str(r.get("plan_type") or "").strip().upper(),
+                str(r.get("sub_product") or "").strip().upper(),
+                str(r.get("class") or "").strip().upper(),
+                str(r.get("class_") or "").strip().upper(),
+                str(r.get("sub_class") or "").strip().upper(),
+                str(r.get("make") or "").strip().upper(),
+                str(r.get("model") or "").strip().upper(),
+                str(r.get("fuel_type") or "").strip().upper(),
+                str(r.get("body_type") or "").strip().upper(),
+                str(r.get("vehicle_age_from") or "").strip(),
+                str(r.get("vehicle_age_to") or "").strip(),
+                str(r.get("cpa_status") or "").strip().upper(),
+                str(r.get("ncb_status") or "").strip().upper(),
+                str(r.get("partner_type") or "").strip().upper(),
+                str(r.get("state") or "").strip().upper(),
+                str(r.get("zone") or "").strip().upper(),
+                str(r.get("rto") or "").strip().upper(),
+            )
+            grouped.setdefault(key, []).append(r)
+            
+        merged_rules = []
+        for key, group in grouped.items():
+            if len(group) == 1:
+                merged_rules.append(group[0])
+                continue
+                
+            any_slab = any(r.get("commission_type") == "SLAB" for r in group)
+            
+            merged_rule = group[0].copy()
+            
+            if any_slab:
+                merged_rule["commission_type"] = "SLAB"
+                merged_rule["slab_configuration"] = True
+                
+                # Reset direct rates
+                for f in ("payin_od", "payout_od", "payin_tp", "payout_tp", "payin_net", "payout_net",
+                          "payin_reward", "payout_reward", "payin_scheme", "payout_scheme"):
+                    merged_rule[f] = None
+                    
+                combined_slabs = []
+                seen_slab_keys = set()
+                
+                for r in group:
+                    slabs_to_add = r.get("slabs") or []
+                    if r.get("commission_type") == "NON_SLAB":
+                        rate_buckets = (
+                            ("OD", "payin_od", r.get("payin_od"), r.get("payout_od")),
+                            ("TP", "payin_tp", r.get("payin_tp"), r.get("payout_tp")),
+                            ("NET", "payin_net", r.get("payin_net"), r.get("payout_net")),
+                        )
+                        for premium_type, payin_field, payin_val, payout_val in rate_buckets:
+                            if payin_val is not None:
+                                combined_slabs.append({
+                                    "payin_type": "PERCENTAGE",
+                                    "premium_type": premium_type,
+                                    "slab_from": None,
+                                    "slab_to": None,
+                                    "payin_od": payin_val if premium_type == "OD" else None,
+                                    "payout_od": payout_val if premium_type == "OD" else None,
+                                    "payin_tp": payin_val if premium_type == "TP" else None,
+                                    "payout_tp": payout_val if premium_type == "TP" else None,
+                                    "payin_net": payin_val if premium_type == "NET" else None,
+                                    "payout_net": payout_val if premium_type == "NET" else None,
+                                    "condition_field": None,
+                                    "operator": None,
+                                    "value": None,
+                                    "original_text": r.get("source")
+                                })
+                    else:
+                        for s in slabs_to_add:
+                            s_key = (
+                                s.get("premium_type"),
+                                s.get("slab_from"),
+                                s.get("slab_to"),
+                                s.get("payin_od"),
+                                s.get("payin_tp"),
+                                s.get("payin_net")
+                            )
+                            if s_key not in seen_slab_keys:
+                                seen_slab_keys.add(s_key)
+                                combined_slabs.append(s)
+                                
+                merged_rule["slabs"] = combined_slabs
+                
+                # Re-check duplicate slab ranges
+                dup_warnings = check_duplicate_slab_ranges(merged_rule["slabs"])
+                merged_rule["warnings"] = [w for w in merged_rule.get("warnings") or [] if not w.startswith("Slab range warning:")]
+                if dup_warnings:
+                    merged_rule["warnings"] = list(merged_rule["warnings"]) + dup_warnings
+                    merged_rule["validation_status"] = "WARNING"
+            else:
+                for r in group[1:]:
+                    if merged_rule["payin_od"] is None: merged_rule["payin_od"] = r.get("payin_od")
+                    if merged_rule["payin_tp"] is None: merged_rule["payin_tp"] = r.get("payin_tp")
+                    if merged_rule["payin_net"] is None: merged_rule["payin_net"] = r.get("payin_net")
+                    if merged_rule["payout_od"] is None: merged_rule["payout_od"] = r.get("payout_od")
+                    if merged_rule["payout_tp"] is None: merged_rule["payout_tp"] = r.get("payout_tp")
+                    if merged_rule["payout_net"] is None: merged_rule["payout_net"] = r.get("payout_net")
+                    
+                for prem in ("od", "tp", "net"):
+                    payin_f = f"payin_{prem}"
+                    payout_f = f"payout_{prem}"
+                    if merged_rule[payout_f] is None and merged_rule[payin_f] is not None:
+                        merged_rule[payout_f] = round(float(merged_rule[payin_f]) * 0.8, 6)
+
+            sources = []
+            remarks_list = []
+            warnings_list = list(merged_rule.get("warnings") or [])
+            
+            for r in group:
+                if r.get("source") and r.get("source") not in sources:
+                    sources.append(r["source"])
+                if r.get("remarks") and r.get("remarks") != "ALL" and r.get("remarks") not in remarks_list:
+                    remarks_list.append(r["remarks"])
+                for w in r.get("warnings") or []:
+                    if w not in warnings_list:
+                        warnings_list.append(w)
+                        
+            merged_rule["source"] = " | ".join(sources)
+            merged_rule["remarks"] = "; ".join(remarks_list) if remarks_list else "ALL"
+            merged_rule["warnings"] = warnings_list
+            
+            merged_rules.append(merged_rule)
+            
+        return merged_rules
 
     def _render_page_png(self, file_bytes: bytes, page_idx: int) -> Optional[bytes]:
         if fitz is None:
@@ -454,7 +650,7 @@ class PdfParserService:
             pix = doc[page_idx].get_pixmap(matrix=fitz.Matrix(2, 2))
             return pix.tobytes("png")
         except Exception as e:
-            print(f"  [LLM VISION ERROR] Page {page_idx + 1} render failed: {e}")
+            logger.error(f"  [LLM VISION ERROR] Page {page_idx + 1} render failed: {e}")
             return None
 
     def _llm_text_extract_page(
@@ -516,7 +712,7 @@ class PdfParserService:
             rows = tool_use.input.get("rows", [])
         except Exception as e:
             usage["errors"] += 1
-            print(f"  [LLM VISION ERROR] Page {page_idx + 1} (Claude): {e}")
+            logger.error(f"  [LLM VISION ERROR] Page {page_idx + 1} (Claude): {e}")
             return -1
         return self._append_llm_rows(rows, company, filename, page_idx + 1, existing_keys, all_parsed_rules)
 
@@ -543,7 +739,7 @@ class PdfParserService:
             rows = tool_use.input.get("rows", [])
         except Exception as e:
             usage["errors"] += 1
-            print(f"  [LLM TEXT ERROR] Page {page_idx + 1} (Claude): {e}")
+            logger.error(f"  [LLM TEXT ERROR] Page {page_idx + 1} (Claude): {e}")
             return -1
         return self._append_llm_rows(rows, company, filename, page_idx + 1, existing_keys, all_parsed_rules)
 
@@ -556,7 +752,7 @@ class PdfParserService:
             return -1
         try:
             client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-            response = client.chat.completions.create(
+            raw_response = client.with_raw_response.chat.completions.create(
                 model=OPENAI_VISION_MODEL,
                 max_tokens=8192,
                 response_format={"type": "json_schema", "json_schema": OPENAI_RESPONSE_SCHEMA},
@@ -568,13 +764,19 @@ class PdfParserService:
                     ],
                 }],
             )
+            headers = raw_response.headers
+            response = raw_response.parse()
+            
+            # Record rate limits
+            self._update_openai_rate_limits(usage, headers)
+            
             self._record_usage(usage, "openai", page_idx + 1, response.usage.prompt_tokens, response.usage.completion_tokens)
             content = response.choices[0].message.content
             data = json.loads(content) if content else {}
             rows = data.get("rows", [])
         except Exception as e:
             usage["errors"] += 1
-            print(f"  [LLM VISION ERROR] Page {page_idx + 1} (OpenAI): {e}")
+            logger.error(f"  [LLM VISION ERROR] Page {page_idx + 1} (OpenAI): {e}")
             return -1
         return self._append_llm_rows(rows, company, filename, page_idx + 1, existing_keys, all_parsed_rules)
 
@@ -584,7 +786,7 @@ class PdfParserService:
     ) -> int:
         try:
             client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-            response = client.chat.completions.create(
+            raw_response = client.with_raw_response.chat.completions.create(
                 model=OPENAI_VISION_MODEL,
                 max_tokens=8192,
                 response_format={"type": "json_schema", "json_schema": OPENAI_RESPONSE_SCHEMA},
@@ -593,15 +795,27 @@ class PdfParserService:
                     "content": f"{LLM_EXTRACTION_PROMPT}\n\nHere is the raw text extracted from page {page_idx + 1}:\n{text_content}",
                 }],
             )
+            headers = raw_response.headers
+            response = raw_response.parse()
+            
+            # Record rate limits
+            self._update_openai_rate_limits(usage, headers)
+            
             self._record_usage(usage, "openai", page_idx + 1, response.usage.prompt_tokens, response.usage.completion_tokens)
             content = response.choices[0].message.content
             data = json.loads(content) if content else {}
             rows = data.get("rows", [])
         except Exception as e:
             usage["errors"] += 1
-            print(f"  [LLM TEXT ERROR] Page {page_idx + 1} (OpenAI): {e}")
+            logger.error(f"  [LLM TEXT ERROR] Page {page_idx + 1} (OpenAI): {e}")
             return -1
         return self._append_llm_rows(rows, company, filename, page_idx + 1, existing_keys, all_parsed_rules)
+
+    def _update_openai_rate_limits(self, usage: Dict[str, Any], headers) -> None:
+        usage["remaining_tokens"] = headers.get("x-ratelimit-remaining-tokens", "N/A")
+        usage["remaining_requests"] = headers.get("x-ratelimit-remaining-requests", "N/A")
+        usage["limit_tokens"] = headers.get("x-ratelimit-limit-tokens", "N/A")
+        usage["limit_requests"] = headers.get("x-ratelimit-limit-requests", "N/A")
 
     def _gemini_vision_extract_page(
         self, file_bytes: bytes, page_idx: int, filename: Optional[str], company: str,
@@ -630,7 +844,7 @@ class PdfParserService:
             rows = data.get("rows", [])
         except Exception as e:
             usage["errors"] += 1
-            print(f"  [LLM VISION ERROR] Page {page_idx + 1} (Gemini): {e}")
+            logger.error(f"  [LLM VISION ERROR] Page {page_idx + 1} (Gemini): {e}")
             return -1
         return self._append_llm_rows(rows, company, filename, page_idx + 1, existing_keys, all_parsed_rules)
 
@@ -657,7 +871,7 @@ class PdfParserService:
             rows = data.get("rows", [])
         except Exception as e:
             usage["errors"] += 1
-            print(f"  [LLM TEXT ERROR] Page {page_idx + 1} (Gemini): {e}")
+            logger.error(f"  [LLM TEXT ERROR] Page {page_idx + 1} (Gemini): {e}")
             return -1
         return self._append_llm_rows(rows, company, filename, page_idx + 1, existing_keys, all_parsed_rules)
 
@@ -667,18 +881,29 @@ class PdfParserService:
         usage["input_tokens"] += input_tokens
         usage["output_tokens"] += output_tokens
         usage["total_tokens"] += input_tokens + output_tokens
-        print(f"  [LLM USAGE] Page {page_num} ({provider}): input={input_tokens:,} output={output_tokens:,} tokens")
+        logger.info(f"  [LLM USAGE] Page {page_num} ({provider}): input={input_tokens:,} output={output_tokens:,} tokens")
 
     def _append_llm_rows(
         self, rows: List[Dict[str, Any]], company: str, filename: Optional[str], page_num: int,
         existing_keys: set, all_parsed_rules: List[Dict[str, Any]]
     ) -> int:
         count = 0
+        slabs_count = 0
+        non_slabs_count = 0
         for row in rows:
             rule_dict = self._llm_row_to_rule(row, company, filename, page_num, existing_keys)
             if rule_dict:
                 all_parsed_rules.append(rule_dict)
                 count += 1
+                if rule_dict.get("commission_type") == "SLAB":
+                    slabs_count += 1
+                else:
+                    non_slabs_count += 1
+        
+        logger.info(
+            f"  [PAGE RESULTS] Page {page_num}: LLM returned {len(rows)} raw rows. "
+            f"Parsed {count} motor rules ({slabs_count} SLAB, {non_slabs_count} NON_SLAB)."
+        )
         return count
 
     def _llm_row_to_rule(
@@ -709,7 +934,94 @@ class PdfParserService:
         zone = row.get("zone") or "ALL"
         rto = row.get("rto") or "ALL"
         source = row.get("source") or "ALL"
-        remarks = row.get("remarks") or "ALL"
+        remarks = row.get("remarks") or ""
+
+        # Perform advanced text-based inferences to augment LLM extractions
+        source_text = str(source)
+        remarks_text = str(remarks)
+        explanation_text = str(row.get("explanation") or "")
+        combined_text = f"{source_text} {remarks_text} {explanation_text}".lower()
+
+        # 1. Product & Sub Class Inferences
+        if product == "ALL" or not product:
+            if "private car" in combined_text or "pvt car" in combined_text:
+                product = "Private Car"
+            elif any(kw in combined_text for kw in ["two wheeler", "2w", "bike", "scooter", "motor cycle", "moped", "scooty"]):
+                product = "Two Wheeler"
+            elif "taxi" in combined_text:
+                product = "Taxi"
+            elif "tractor" in combined_text:
+                product = "Tractor"
+            elif "gcv" in combined_text or "goods carrying" in combined_text:
+                product = "GCV"
+            elif "pcv" in combined_text or "passenger carrying" in combined_text:
+                product = "PCV"
+            elif any(kw in combined_text for kw in ["misc-d", "misc d", "miscellaneous"]):
+                product = "Misc D"
+            elif "e-rickshaw" in combined_text or "e-cart" in combined_text:
+                product = "E-Rickshaw"
+
+        if sub_class == "ALL" or not sub_class:
+            if product == "Two Wheeler":
+                if "scooter" in combined_text or "scooty" in combined_text or "moped" in combined_text:
+                    sub_class = "Two Wheeler (Scooters)"
+                elif "bike" in combined_text or "motorcycle" in combined_text or "motor cycle" in combined_text:
+                    sub_class = "Two Wheeler (Bike)"
+                else:
+                    sub_class = "Two Wheeler (Both bike and Scooters)"
+            elif product == "GCV":
+                gvw_match = re.search(r"gvw\s*(?:>|<=|>=|<)?\s*\d+", combined_text)
+                if gvw_match:
+                    sub_class = f"GCV {gvw_match.group(0).upper()}"
+                else:
+                    sub_class = "GCV"
+            elif product == "PCV":
+                if "bus" in combined_text:
+                    sub_class = "PCV Bus"
+                elif "taxi" in combined_text:
+                    sub_class = "Taxi"
+                else:
+                    sub_class = "PCV"
+            elif "both bike and scooters" in combined_text:
+                sub_class = "Two Wheeler (Both bike and Scooters)"
+            elif "private car" in combined_text:
+                sub_class = "Private Car"
+            elif "taxi" in combined_text:
+                sub_class = "Taxi"
+
+        # 2. Policy Type & Plan Type Inferences
+        combined_policy_text = f"{policy_type} {plan_type} {combined_text}".lower()
+        if any(kw in combined_policy_text for kw in ["saod", "standalone od", "sod", "standalone own damage", "stand alone", "stand alone own damage"]):
+            policy_type = "Standalone Own Damage"
+            plan_type = "Stand Alone Own Damage Policy"
+        elif any(kw in combined_policy_text for kw in ["satp", "third party", "tp only", "act only", "tp policy", "tp cases", "liability only", "liability"]):
+            policy_type = "Third Party"
+            plan_type = "Liability Only Policy"
+        elif any(kw in combined_policy_text for kw in ["package", "comprehensive", "p & l", "pkg"]):
+            policy_type = "Comprehensive"
+            plan_type = "Package Policy"
+
+        # 3. NCB Status Inference
+        if ncb == "ALL" or not ncb:
+            if "without ncb" in combined_text or "no ncb" in combined_text:
+                ncb = "without NCB"
+            elif "ncb cases only" in combined_text or "only ncb" in combined_text:
+                ncb = "NCB cases only"
+            elif "with ncb" in combined_text or "has ncb" in combined_text:
+                ncb = "with NCB"
+            elif any(kw in combined_text for kw in ["break in >90", "break-in > 90", "break-in >90"]):
+                ncb = "Break in >90 days"
+            elif "break in" in combined_text or "break-in" in combined_text:
+                ncb = "Break-in"
+
+        # 4. CPA Status Inference
+        if cpa == "ALL" or not cpa:
+            if "without cpa" in combined_text or "excluding cpa" in combined_text:
+                cpa = "without CPA"
+            elif "with cpa" in combined_text or "including cpa" in combined_text or "cpa cover" in combined_text or "pa owner driver" in combined_text or "cpa yes" in combined_text:
+                cpa = "with CPA"
+            elif "stand alone cpa" in combined_text or "sacpa" in combined_text:
+                cpa = "Stand Alone CPA"
 
         state_raw = row.get("state")
         normalized_state = self.normalizer.normalize_states(state_raw) if state_raw else None
@@ -768,33 +1080,99 @@ class PdfParserService:
             "source": source,
             "rto": rto,
             "effective_date": date.today(),
-            "remarks": remarks,
+            "remarks": remarks or "ALL",
         }
 
         # Validate
         status, warnings = RuleValidator.validate_rule(rule_data, existing_keys)
-        
-        # Add explanation panel text under Validation Warnings
-        explanation = row.get("explanation")
-        if explanation:
-            warnings.append(f"Source Rule: {explanation}")
+
+        # Handle slabs validation and classification redesign
+        is_slab = (row.get("commission_type") == "SLAB")
+        slabs_in = row.get("slabs") or []
+
+        # Slabs validation: Whitelist of allowed numeric fields
+        allowed_numeric_fields = {
+            "DISCOUNT", "VEHICLE AGE", "AGE", "IDV", "SUM INSURED", "SI", "CC", "GVW", 
+            "WEIGHT", "ENGINE CAPACITY", "GROSS VEHICLE WEIGHT", "PREMIUM BAND", "THRESHOLD"
+        }
+
+        has_categorical_slabs = False
+        slab_condition = None
+        for s in slabs_in:
+            cond = str(s.get("condition_field") or "").strip().upper()
+            if cond:
+                slab_condition = s.get("condition_field")
+                if cond not in allowed_numeric_fields:
+                    has_categorical_slabs = True
+                    break
+            orig_text = str(s.get("original_text") or "").upper()
+            if any(k in orig_text for k in ["NCB", "CPA", "HP", "FLEET", "PARTNER"]):
+                has_categorical_slabs = True
+                break
+
+        if is_slab and (not slabs_in or has_categorical_slabs):
+            is_slab = False
+            # Flatten/collapse first slab rates to main rule fields if main rule rates are null
+            if slabs_in:
+                first_slab = slabs_in[0]
+                if payin_od is None: payin_od = first_slab.get("payin_od")
+                if payin_tp is None: payin_tp = first_slab.get("payin_tp")
+                if payin_net is None: payin_net = first_slab.get("payin_net")
+                if payout_od is None: payout_od = first_slab.get("payout_od")
+                if payout_tp is None: payout_tp = first_slab.get("payout_tp")
+                if payout_net is None: payout_net = first_slab.get("payout_net")
+                
+                cond_val = first_slab.get("original_text") or first_slab.get("condition_field") or ""
+                cond_val_upper = str(cond_val).upper()
+                if "NCB" in cond_val_upper:
+                    rule_data["ncb_status"] = cond_val
+                elif "CPA" in cond_val_upper:
+                    rule_data["cpa_status"] = cond_val
+                else:
+                    if rule_data["remarks"] == "ALL" or not rule_data["remarks"]:
+                        rule_data["remarks"] = f"Condition: {cond_val}"
+                    else:
+                        rule_data["remarks"] = f"{rule_data['remarks']}; Condition: {cond_val}"
+            slabs_in = []
+
+        # Generate structured explanation with fallback to original row explanation
+        explanation_val = row.get("explanation")
+        if not explanation_val:
+            if is_slab:
+                explanation_val = (
+                    f"Reason: Detected numeric slab ranges for '{slab_condition or 'Discount/Age/IDV/CC'}'. "
+                    f"Generated Slabs: " + ", ".join([f"{s.get('slab_from') or 0}-{s.get('slab_to') or 'MAX'}" for s in slabs_in]) + ". "
+                    f"Original Text: {source}"
+                )
+            else:
+                explanation_val = (
+                    f"Stored as NON_SLAB. Reason: Commission depends on categorical condition or remarks (no numeric boundaries). "
+                    f"CRM slab fields only accept numeric values. Original Text: {source}"
+                )
+        else:
+            # If we programmatically forced a slab to non-slab, adjust the explanation to explain the override
+            if (row.get("commission_type") == "SLAB") and not is_slab:
+                explanation_val = (
+                    f"Stored as NON_SLAB. Reason: Commission depends on categorical condition or remarks (no numeric boundaries). "
+                    f"CRM slab fields only accept numeric values. Original Text: {source}. (Overridden from SLAB)"
+                )
+
+        # Add explanation to warnings
+        warnings.append(f"Source Rule: {explanation_val}")
 
         rule_data["validation_status"] = status
         rule_data["warnings"] = warnings
         rule_data["raw_json"] = row
 
-        # Handle slabs
-        is_slab = (row.get("commission_type") == "SLAB")
         if is_slab:
             rule_data["commission_type"] = "SLAB"
             rule_data["slab_configuration"] = True
             
-            # Reset direct rule rate fields
             for f in ("payin_od", "payout_od", "payin_tp", "payout_tp", "payin_net", "payout_net",
                       "payin_reward", "payout_reward", "payin_scheme", "payout_scheme"):
                 rule_data[f] = None
                 
-            rule_data["slabs"] = self._tiers_to_slabs(row.get("slabs") or [])
+            rule_data["slabs"] = self._tiers_to_slabs(slabs_in)
             
             dup_warnings = check_duplicate_slab_ranges(rule_data["slabs"])
             if dup_warnings:
@@ -816,6 +1194,35 @@ class PdfParserService:
             rule_data["slabs"] = []
 
         return rule_data
+
+    def _clean_numeric_boundary(self, val: Any) -> Optional[float]:
+        if val is None:
+            return None
+        val_str = str(val).strip().upper()
+        if val_str in ("OPEN", "NA", "N/A", "DEFAULT", "ABOVE", "BELOW", "ANY", ""):
+            return None
+        
+        # Clean the string, keeping only digits, decimal point, and minus sign
+        cleaned = ""
+        for char in val_str:
+            if char.isdigit() or char == '.' or char == '-':
+                cleaned += char
+                
+        if not cleaned:
+            return None
+            
+        try:
+            multiplier = 1.0
+            # Support Lakhs / Lakh / L
+            if "LAKH" in val_str:
+                multiplier = 100000.0
+            # Support K (if representing thousand, e.g. "50k" -> 50000)
+            elif "K" in val_str and not any(unit in val_str for unit in ("KG", "CC")):
+                multiplier = 1000.0
+                
+            return float(cleaned) * multiplier
+        except ValueError:
+            return None
 
     def _tiers_to_slabs(self, tiers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
@@ -844,23 +1251,8 @@ class PdfParserService:
 
         slabs = []
         for t in normalized:
-            slab_from = t.get("_resolved_from")
-            slab_to = t.get("_resolved_to")
-            
-            # Try to convert numeric bounds to float
-            try:
-                if slab_from is not None:
-                    slab_from = float(str(slab_from).replace("%", "").strip())
-            except ValueError:
-                pass
-            try:
-                if slab_to is not None:
-                    if str(slab_to).strip().upper() == "OPEN":
-                        slab_to = None
-                    else:
-                        slab_to = float(str(slab_to).replace("%", "").strip())
-            except ValueError:
-                pass
+            slab_from = self._clean_numeric_boundary(t.get("_resolved_from"))
+            slab_to = self._clean_numeric_boundary(t.get("_resolved_to"))
 
             od_val = t.get("commission_od_pct")
             if od_val is None:

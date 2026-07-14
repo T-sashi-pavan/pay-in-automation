@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import desc, or_, and_, insert
 from typing import List, Optional, Dict, Any
 
-from backend.app.database.session import get_db
+from backend.app.database.session import get_db, SessionLocal
 from backend.app.models.upload_history import UploadHistory
 from backend.app.models.commission_rule import CommissionRule
 from backend.app.models.slab_detail import SlabDetail
@@ -34,8 +34,153 @@ pdf_parser_service = PdfParserService()
 
 SUPPORTED_EXTENSIONS = (".xlsx", ".xls", ".docx", ".pdf")
 
+def process_upload_in_background(upload_id: int, file_path: str, filename: str):
+    logger.info(f"[BG TASK START] Background upload task started for upload_id={upload_id}, filename='{filename}'")
+    db = SessionLocal()
+    try:
+        upload_history = db.query(UploadHistory).filter(UploadHistory.id == upload_id).first()
+        if not upload_history:
+            logger.error(f"[BG TASK ERROR] UploadHistory record not found for upload_id={upload_id}")
+            return
+
+        with open(file_path, "rb") as f:
+            file_bytes = f.read()
+
+        filename_lower = filename.lower()
+        if filename_lower.endswith(".docx"):
+            parsed_rules = docx_parser_service.parse_document(file_bytes, filename=filename)
+        elif filename_lower.endswith(".pdf"):
+            parsed_rules = pdf_parser_service.parse_pdf(file_bytes, filename=filename)
+        else:
+            parsed_rules = excel_parser_service.parse_workbook(file_bytes, filename=filename)
+
+        if parsed_rules:
+            for r in parsed_rules:
+                r["lob"] = "Motor"
+
+        if not parsed_rules:
+            logger.warning(f"[BG TASK FAIL] No valid commission rules parsed for filename='{filename}'")
+            upload_history.status = "FAILED"
+            upload_history.company = "N/A"
+            db.commit()
+            return
+
+        # Detect primary insurer from parsed rules
+        detected_company = "Unknown Insurer"
+        for rule in parsed_rules:
+            if rule.get("insurance_company") and rule["insurance_company"] != "ALL":
+                detected_company = rule["insurance_company"]
+                break
+
+        upload_history.company = detected_company
+
+        # Save rules and slabs in optimized chunks
+        rules_to_insert = []
+        for rule in parsed_rules:
+            slabs_data = rule.pop("slabs", [])
+            rule["upload_id"] = upload_history.id
+            rules_to_insert.append((rule, slabs_data))
+
+        batch_size = 1000
+        for i in range(0, len(rules_to_insert), batch_size):
+            batch = rules_to_insert[i:i+batch_size]
+            
+            rules_dicts = []
+            for r_data, _ in batch:
+                d = r_data.copy()
+                if "class_" in d:
+                    d["class"] = d.pop("class_")
+                
+                def truncate(val, max_len):
+                    if val is None:
+                        return None
+                    v_str = str(val)
+                    return v_str[:max_len] if len(v_str) > max_len else v_str
+
+                d["sheet_name"] = truncate(d.get("sheet_name"), 255)
+                d["lob"] = truncate(d.get("lob"), 255)
+                d["file_type"] = truncate(d.get("file_type"), 255)
+                d["insurance_company"] = truncate(d.get("insurance_company"), 255)
+                d["product"] = truncate(d.get("product"), 500)
+                d["policy_type"] = truncate(d.get("policy_type"), 255)
+                d["plan_type"] = truncate(d.get("plan_type"), 255)
+                d["sub_product"] = truncate(d.get("sub_product"), 255)
+                d["class"] = truncate(d.get("class"), 255)
+                d["sub_class"] = truncate(d.get("sub_class"), 255)
+                d["make"] = truncate(d.get("make"), 255)
+                d["model"] = truncate(d.get("model"), 255)
+                d["fuel_type"] = truncate(d.get("fuel_type"), 255)
+                d["body_type"] = truncate(d.get("body_type"), 255)
+                d["cpa_status"] = truncate(d.get("cpa_status"), 255)
+                d["ncb_status"] = truncate(d.get("ncb_status"), 255)
+                d["partner_type"] = truncate(d.get("partner_type"), 255)
+                d["state"] = truncate(d.get("state"), 500)
+                d["zone"] = truncate(d.get("zone"), 255)
+                d["source"] = truncate(d.get("source"), 255)
+                d["rto"] = truncate(d.get("rto"), 500)
+                
+                rules_dicts.append(d)
+                
+            result = db.execute(
+                insert(CommissionRule).returning(CommissionRule.id),
+                rules_dicts
+            )
+            inserted_ids = [row[0] for row in result.all()]
+            
+            slabs_dicts = []
+            for idx, (_, slabs) in enumerate(batch):
+                rule_id = inserted_ids[idx]
+                for s in slabs:
+                    s["commission_rule_id"] = rule_id
+                    
+                    def truncate(val, max_len):
+                        if val is None:
+                            return None
+                        v_str = str(val)
+                        return v_str[:max_len] if len(v_str) > max_len else v_str
+
+                    s["payin_type"] = truncate(s.get("payin_type"), 50)
+                    s["premium_type"] = truncate(s.get("premium_type"), 50)
+                    s["condition_field"] = truncate(s.get("condition_field"), 255)
+                    s["operator"] = truncate(s.get("operator"), 50)
+                    
+                    slabs_dicts.append(s)
+            
+            if slabs_dicts:
+                db.execute(
+                    insert(SlabDetail),
+                    slabs_dicts
+                )
+
+        upload_history.status = "COMPLETED"
+        upload_history.total_records = len(parsed_rules)
+        db.commit()
+        logger.info(f"[BG TASK COMPLETED] Successfully completed upload_id={upload_id}, total_records={len(parsed_rules)}")
+
+    except Exception as e:
+        logger.error(f"[BG TASK EXCEPTION] Exception in background processing: {e}", exc_info=True)
+        try:
+            db.rollback()
+            upload_history = db.query(UploadHistory).filter(UploadHistory.id == upload_id).first()
+            if upload_history:
+                upload_history.status = "FAILED"
+                db.commit()
+        except Exception as db_err:
+            logger.error(f"[BG TASK EXCEPTION] Failed to update upload history status to FAILED: {db_err}")
+    finally:
+        db.close()
+        # Clean up local file
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+                logger.info(f"[BG TASK CLEANUP] Cleaned up temporary file: {file_path}")
+            except Exception as fe:
+                logger.error(f"[BG TASK CLEANUP] Failed to remove temp file: {fe}")
+
+
 @router.post("/upload")
 async def upload_excel(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
@@ -65,116 +210,20 @@ async def upload_excel(
     db.commit()
     db.refresh(upload_history)
 
-    # Read and parse file
-    try:
-        with open(file_path, "rb") as f:
-            file_bytes = f.read()
+    # Enqueue background task
+    background_tasks.add_task(
+        process_upload_in_background,
+        upload_history.id,
+        file_path,
+        file.filename
+    )
 
-        filename_lower = file.filename.lower()
-        if filename_lower.endswith(".docx"):
-            parsed_rules = docx_parser_service.parse_document(file_bytes, filename=file.filename)
-        elif filename_lower.endswith(".pdf"):
-            parsed_rules = pdf_parser_service.parse_pdf(file_bytes, filename=file.filename)
-        else:
-            parsed_rules = excel_parser_service.parse_workbook(file_bytes, filename=file.filename)
-
-        if parsed_rules:
-            for r in parsed_rules:
-                r["lob"] = "Motor"
-
-        if not parsed_rules:
-            # Update status to failed if no rules could be parsed. For scanned
-            # PDFs this also fires when OCR ran but produced no usable data
-            # (every extracted row was empty/unreadable) — surfaced as a clear
-            # failure instead of silently storing garbage rows.
-            upload_history.status = "FAILED"
-            upload_history.company = "N/A"
-            db.commit()
-            detail = "No valid commission tables detected in the file."
-            if filename_lower.endswith(".pdf"):
-                detail = (
-                    "Could not extract readable commission data from this PDF. If it's a scanned/image-based "
-                    "PDF, OCR was attempted but produced no usable rows — this can happen on dense or irregular "
-                    "table layouts. Try a text-based PDF, a Word/Excel version, or a manually prepared spreadsheet."
-                )
-            raise HTTPException(status_code=422, detail=detail)
-
-        # Detect primary insurer from parsed rules
-        detected_company = "Unknown Insurer"
-        for rule in parsed_rules:
-            if rule.get("insurance_company"):
-                detected_company = rule["insurance_company"]
-                break
-
-        upload_history.company = detected_company
-
-        # Save rules and slabs in optimized chunks
-        rules_to_insert = []
-        for rule in parsed_rules:
-            slabs_data = rule.pop("slabs", [])
-            rule["upload_id"] = upload_history.id
-            rules_to_insert.append((rule, slabs_data))
-
-        batch_size = 1000
-        for i in range(0, len(rules_to_insert), batch_size):
-            batch = rules_to_insert[i:i+batch_size]
-            
-            # Map parameters and handle attribute "class_" to column "class" mapping
-            rules_dicts = []
-            for r_data, _ in batch:
-                d = r_data.copy()
-                if "class_" in d:
-                    d["class"] = d.pop("class_")
-                rules_dicts.append(d)
-                
-            # Core insert rules and retrieve generated primary key IDs
-            result = db.execute(
-                insert(CommissionRule).returning(CommissionRule.id),
-                rules_dicts
-            )
-            inserted_ids = [row[0] for row in result.all()]
-            
-            # Prep slabs to insert mapped to retrieved rule IDs
-            slabs_dicts = []
-            for idx, (_, slabs) in enumerate(batch):
-                rule_id = inserted_ids[idx]
-                for s in slabs:
-                    s["commission_rule_id"] = rule_id
-                    slabs_dicts.append(s)
-            
-            if slabs_dicts:
-                db.execute(
-                    insert(SlabDetail),
-                    slabs_dicts
-                )
-
-        upload_history.status = "COMPLETED"
-        upload_history.total_records = len(parsed_rules)
-        db.commit()
-
-        # Clean up local file
-        if os.path.exists(file_path):
-            os.remove(file_path)
-
-        return {
-            "upload_id": upload_history.id,
-            "filename": upload_history.filename,
-            "total_records": upload_history.total_records
-        }
-
-    except HTTPException as he:
-        # Cleanup file if present
-        if os.path.exists(file_path):
-            os.remove(file_path)
-        raise he
-    except Exception as e:
-        logger.error(f"Error processing workbook parsing: {e}")
-        upload_history.status = "FAILED"
-        db.commit()
-        # Cleanup file if present
-        if os.path.exists(file_path):
-            os.remove(file_path)
-        raise HTTPException(status_code=500, detail=f"Database or parsing error: {str(e)}")
+    return {
+        "upload_id": upload_history.id,
+        "filename": upload_history.filename,
+        "status": "PROCESSING",
+        "total_records": 0
+    }
 
 
 @router.get("/dashboard-summary")
