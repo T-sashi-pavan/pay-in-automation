@@ -61,61 +61,19 @@ def extract_numeric_range(text: str) -> Tuple[Optional[float], Optional[float]]:
 
 
 def classify_rule_type(sheet_name: str, headers: List[str], base_rule: Dict[str, Any], flat_rates: Dict[str, Any]) -> str:
-    company = str(base_rule.get("insurance_company") or "").lower()
     sheet_lower = sheet_name.lower()
-    # A sheet literally named "Non-Slab" (a natural, common choice for this
-    # app's own domain) would otherwise false-positive-match every "slab"
-    # substring keyword check below via simple containment ("slab" in
-    # "non-slab" is True) and get every row on it misclassified as SLAB.
     sheet_lower = re.sub(r"non[\s\-_]*slab", "", sheet_lower)
     headers_lower = [str(h).lower() for h in headers]
     
-    # --- TATA SPECIFIC ---
-    if "tata" in company:
-        if "incremental" in sheet_lower:
-            return "SLAB"
-        return "NON_SLAB"
-        
-    # --- CHOLAMANDALAM SPECIFIC ---
-    if "chola" in company or "cholamandalam" in company:
-        if any(kw in sheet_lower for kw in ["slab", "range", "threshold"]) or any("slab" in h for h in headers_lower):
-            return "SLAB"
-        return "NON_SLAB"
-        
-    # --- GO DIGIT SPECIFIC ---
-    if "digit" in company or "go digit" in company:
-        if "non motor" in sheet_lower or "health" in sheet_lower:
-            if any("our share of si slab" in h for h in headers_lower):
-                return "SLAB"
-        if any(kw in sheet_lower for kw in ["slab", "range", "threshold"]) or any(any(kw in h for kw in ["slab", "range", "threshold"]) for h in headers_lower):
-            return "SLAB"
-        return "NON_SLAB"
-        
-    # --- SHRIRAM SPECIFIC ---
-    if "shriram" in company:
-        has_slab_keyword = any(kw in sheet_lower for kw in ["slab", "range", "threshold"]) or any(any(kw in h for kw in ["slab", "range", "threshold"]) for h in headers_lower)
-        has_slab_values = flat_rates.get("slab_from") is not None or flat_rates.get("slab_to") is not None
-        if has_slab_keyword or has_slab_values:
-            return "SLAB"
-        return "NON_SLAB"
-
-    # --- GENERAL CLASSIFICATION ENGINE ---
-    slab_keywords = ["slab", "si slab", "premium slab", "incremental rule", "range", "threshold", "from", "to", "upto"]
+    # Check for explicit slab indicators (slab, si slab, premium slab, threshold)
+    # Excludes "from", "to", "upto", and "range" as they match eligibility headers
+    slab_keywords = ["slab", "si slab", "premium slab", "threshold"]
     if any(kw in sheet_lower for kw in slab_keywords) or any(any(kw in h for kw in slab_keywords) for h in headers_lower):
         return "SLAB"
         
     if flat_rates.get("slab_from") is not None or flat_rates.get("slab_to") is not None:
         return "SLAB"
         
-    range_regex = re.compile(
-        r'(?:[><=]+\s*\d+|\b(?:upto|above|below|under|exceeding)\s*\d+|\b\d+\s*(?:-|to|<=|>=|<|>)\s*\d+)',
-        re.IGNORECASE
-    )
-    for field in ("product", "sub_class", "remarks"):
-        val = base_rule.get(field)
-        if val and range_regex.search(str(val)):
-            return "SLAB"
-            
     return "NON_SLAB"
 
 
@@ -599,8 +557,8 @@ class ExcelParserService:
             
             # Skip lookup master sheets for Tata
             sheet_name_lower = sheet_name.lower()
-            if "vehicle type master" in sheet_name_lower or ("master" in sheet_name_lower and "vehicle" in sheet_name_lower):
-                print(f"  [SHEET SKIP] Skipping Tata vehicle type master lookup sheet: '{sheet_name}'.")
+            if "vehicle type master" in sheet_name_lower or ("master" in sheet_name_lower and "vehicle" in sheet_name_lower) or "incremental" in sheet_name_lower:
+                print(f"  [SHEET SKIP] Skipping Tata lookup/incremental sheet: '{sheet_name}'.")
                 continue
 
             # Skip reference/lookup-only sheets (RTO/zone code tables, decline
@@ -1078,6 +1036,7 @@ class ExcelParserService:
                 str(r.get("zone") or "").strip().upper(),
                 str(r.get("source") or "").strip().upper(),
                 str(r.get("rto") or "").strip().upper(),
+                str(r.get("remarks") or "").strip().upper(),
                 str(r.get("effective_date") or "").strip(),
             )
             grouped_rules.setdefault(key, []).append(r)

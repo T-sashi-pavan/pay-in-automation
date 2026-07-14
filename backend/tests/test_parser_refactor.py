@@ -22,15 +22,15 @@ def test_is_slab_rule():
     
     # Check headers
     assert is_slab_rule("Grid", ["Premium Slab", "Insurer"], {}, {}) is True
-    assert is_slab_rule("Grid", ["Range", "LOB"], {}, {}) is True
+    assert is_slab_rule("Grid", ["Range", "LOB"], {}, {}) is False
     assert is_slab_rule("Grid", ["Vehicle Age", "LOB"], {}, {}) is False
     
     # Check values of slab_from/slab_to
     assert is_slab_rule("Grid", [], {}, {"slab_from": 100}) is True
     assert is_slab_rule("Grid", [], {}, {"slab_to": 200}) is True
     
-    # Check ranges in product, subclass or remarks
-    assert is_slab_rule("Grid", [], {"product": "GCP >3.5<=7.5"}, {}) is True
-    assert is_slab_rule("Grid", [], {"sub_class": "Upto 2.5T"}, {}) is True
-    assert is_slab_rule("Grid", [], {"remarks": "SI > 50000"}, {}) is True
+    # Check ranges in product, subclass or remarks (should be False now as they are business filters)
+    assert is_slab_rule("Grid", [], {"product": "GCP >3.5<=7.5"}, {}) is False
+    assert is_slab_rule("Grid", [], {"sub_class": "Upto 2.5T"}, {}) is False
+    assert is_slab_rule("Grid", [], {"remarks": "SI > 50000"}, {}) is False
     assert is_slab_rule("Grid", [], {"product": "GCV"}, {}) is False
