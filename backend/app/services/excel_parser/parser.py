@@ -55,7 +55,7 @@ def extract_numeric_range(text: str) -> Tuple[Optional[float], Optional[float]]:
         if ">" in text_clean:
             return num, None
         elif "<" in text_clean or "upto" in text_clean.lower() or "up to" in text_clean.lower() or "under" in text_clean.lower():
-            return 1.0, num
+            return 0.0, num
             
     return None, None
 
@@ -110,32 +110,32 @@ def is_rule_effectively_empty(rule: Dict[str, Any]) -> bool:
 
 def check_duplicate_slab_ranges(slabs: List[Dict[str, Any]]) -> List[str]:
     """
-    Real slab tiers must each cover a distinct (slab_from, slab_to) range
-    PER premium_type (OD/TP/NET) — two tiers sharing an identical range AND
-    the same premium_type is a parsing failure (e.g. a boundary never got
-    captured and both tiers fell back to the same value), not a legitimate
-    business case. premium_type is part of the key because one discount tier
-    legitimately produces two rows sharing a boundary — one OD, one TP — which
-    is not a duplicate.
-
-    A null/null boundary gets its own check: the display layer (rule_serializer's
-    _serialize_slab) paints every unresolved (None, None) tier with the same
-    1/500000 placeholder, so two or more null-boundary tiers in one rule LOOK
-    like duplicates to anyone viewing them even though they're distinct "unknown"
-    values underneath — flag that case too rather than only exact value matches.
-
-    Returns human-readable warnings for each real issue found, to surface via
-    the existing validation_status/warnings mechanism instead of silently
-    accepting the invalid data.
+    Validates slab ranges for:
+    - Invalid ranges (From > To)
+    - Duplicate ranges
+    - Overlapping ranges
     """
     warnings: List[str] = []
     seen: Dict[Tuple[Any, Any, Any], int] = {}
     null_boundary_count = 0
     for slab in slabs:
-        if slab.get("slab_from") is None and slab.get("slab_to") is None:
+        s_from = slab.get("slab_from")
+        s_to = slab.get("slab_to")
+        
+        # 1. Check From > To
+        if s_from is not None and s_to is not None:
+            try:
+                from_num = float(s_from)
+                to_num = float(s_to)
+                if from_num > to_num:
+                    warnings.append(f"Invalid slab range: 'From' limit ({from_num}) is greater than 'To' limit ({to_num})")
+            except (ValueError, TypeError):
+                pass
+                
+        if s_from is None and s_to is None:
             null_boundary_count += 1
             continue
-        key = (slab.get("slab_from"), slab.get("slab_to"), slab.get("premium_type"))
+        key = (s_from, s_to, slab.get("premium_type"))
         seen[key] = seen.get(key, 0) + 1
 
     if null_boundary_count > 1:
@@ -149,59 +149,127 @@ def check_duplicate_slab_ranges(slabs: List[Dict[str, Any]]) -> List[str]:
             warnings.append(
                 f"Duplicate slab range detected ({slab_from}–{slab_to}, {premium_type} appears {count} times) — possible extraction error"
             )
+            
+    # 2. Check overlapping ranges per premium_type
+    by_type = {}
+    for slab in slabs:
+        p_type = slab.get("premium_type")
+        by_type.setdefault(p_type, []).append(slab)
+        
+    for p_type, type_slabs in by_type.items():
+        valid_intervals = []
+        for slab in type_slabs:
+            s_from = slab.get("slab_from")
+            s_to = slab.get("slab_to")
+            if s_from is not None:
+                try:
+                    from_num = float(s_from)
+                    to_num = float(s_to) if (s_to is not None and s_to != "OPEN") else float('inf')
+                    valid_intervals.append((from_num, to_num))
+                except (ValueError, TypeError):
+                    pass
+        # Sort by start of interval
+        valid_intervals.sort()
+        for i in range(len(valid_intervals) - 1):
+            curr_from, curr_to = valid_intervals[i]
+            next_from, next_to = valid_intervals[i+1]
+            if curr_from == next_from and curr_to == next_to:
+                continue
+            if curr_to > next_from:
+                warnings.append(f"Overlapping slab range detected: ({curr_from}–{curr_to} overlaps with {next_from}–{next_to}) for {p_type or 'ALL'}")
+                
     return warnings
 
 
-def parse_tiered_rate_text(text: Any) -> Optional[List[Tuple[Optional[int], Optional[int], float]]]:
+def parse_tiered_rate_text(text: Any) -> Optional[List[Dict[str, Any]]]:
     """
     Detects vehicle-age-tiered text packed into a single pivot cell, e.g.
     "Age 0: 60%/ 85% \nAge >=1: 85%" or "Upto 0-2 Yrs - 45%\n3+ Yrs - 50%".
-    Returns a list of (age_from, age_to, pct) tuples when >=2 recognizable
+    Returns a list of parsed slab dictionaries when >=2 recognizable
     age-tier lines are found, else None (so the caller falls back to the
     existing single-value parsing path unchanged).
-
-    Heuristic note: when a tier line itself contains more than one percentage
-    (e.g. "Age 0: 60%/ 85%"), the FIRST percentage found is used as the
-    representative rate for that tier — the source grids don't disambiguate
-    which sub-value applies without more context, so this is a documented
-    best-effort choice, not a guaranteed-correct business rule.
     """
     if not text or not isinstance(text, str):
         return None
 
-    segments = [s.strip() for s in re.split(r'[\n\r]+', text) if s.strip()]
+    segments = [s.strip() for s in re.split(r'[\n\r;]+', text) if s.strip()]
     if len(segments) < 2:
         return None
 
-    tiers: List[Tuple[Optional[int], Optional[int], float]] = []
+    tiers: List[Dict[str, Any]] = []
     for seg in segments:
         # Only treat this as an age-tiered cell if every line references age/years —
         # avoids false positives on unrelated multi-line text (e.g. maker-specific notes).
         if not re.search(r'\bage\b|\byrs?\b|\byear', seg, re.IGNORECASE):
             return None
 
-        age_from: Optional[int] = None
-        age_to: Optional[int] = None
-        m_ge = re.search(r'>=\s*(\d+)', seg)
-        m_range = re.search(r'(\d+)\s*(?:to|-)\s*(\d+)', seg, re.IGNORECASE)
-        m_plus = re.search(r'(\d+)\s*\+', seg)
-        m_single = re.search(r'\b(\d+)\b', seg)
-        if m_ge:
-            age_from = int(m_ge.group(1))
-        elif m_range:
-            age_from, age_to = int(m_range.group(1)), int(m_range.group(2))
-        elif m_plus:
-            age_from = int(m_plus.group(1))
-        elif m_single:
-            age_from = age_to = int(m_single.group(1))
-        else:
-            return None
-
+        # Extract rate percentage
         m_pct = re.search(r'([\d.]+)\s*%', seg)
         if not m_pct:
             return None
+        pct = float(m_pct.group(1))
 
-        tiers.append((age_from, age_to, float(m_pct.group(1))))
+        # Operators: >=, <=, >, <, =
+        m_op = re.search(r'(>=|<=|>|<|=)\s*([\d.]+)', seg)
+        m_age_0 = re.search(r'\bage\s*0\b', seg, re.IGNORECASE)
+        m_plus = re.search(r'(\d+(?:\.\d+)?)\s*\+', seg)
+        m_range = re.search(r'(\d+(?:\.\d+)?)\s*(?:to|-)\s*(\d+(?:\.\d+)?)', seg, re.IGNORECASE)
+        m_upto = re.search(r'\b(?:upto|up\s+to|under)\s*(\d+(?:\.\d+)?)', seg, re.IGNORECASE)
+        m_above = re.search(r'\b(?:above|exceeding)\s*(\d+(?:\.\d+)?)', seg, re.IGNORECASE)
+
+        cond_field = "Vehicle Age"
+        operator = None
+        value = None
+        slab_from = None
+        slab_to = None
+
+        if m_op:
+            operator = m_op.group(1)
+            value = float(m_op.group(2))
+        elif m_age_0:
+            operator = "="
+            value = 0.0
+        elif m_plus:
+            operator = ">="
+            value = float(m_plus.group(1))
+        elif m_range:
+            slab_from = float(m_range.group(1))
+            slab_to = float(m_range.group(2))
+        elif m_upto:
+            operator = "<="
+            value = float(m_upto.group(1))
+        elif m_above:
+            operator = ">"
+            value = float(m_above.group(1))
+        else:
+            m_single = re.search(r'\b(\d+(?:\.\d+)?)\b', seg)
+            if m_single:
+                operator = "="
+                value = float(m_single.group(1))
+            else:
+                return None
+
+        # Build slab_from and slab_to based on operator if operator exists
+        if operator is not None:
+            if operator == "=":
+                slab_from = value
+                slab_to = value
+            elif operator in (">=", ">"):
+                slab_from = value
+                slab_to = None
+            elif operator in ("<=", "<"):
+                slab_from = 0.0
+                slab_to = value
+
+        tiers.append({
+            "condition_field": cond_field,
+            "operator": operator,
+            "value": value,
+            "slab_from": slab_from,
+            "slab_to": slab_to,
+            "rate_pct": pct,
+            "original_text": seg
+        })
 
     return tiers if len(tiers) >= 2 else None
 
@@ -784,14 +852,7 @@ class ExcelParserService:
                 base_rule["effective_date"] = parsed_dt if parsed_dt else date.today()
                 
                 # Fallback LOB detection
-                if not base_rule["lob"]:
-                    check_str = f"{sheet_name} {filename or ''} {base_rule['product'] or ''}".lower()
-                    if any(x in check_str for x in ["gcv", "pccv", "gccv", "pcv", "motor", "wheeler", "tw", "car", "moped", "scooter", "bike", "private"]):
-                        base_rule["lob"] = "Motor"
-                    elif any(x in check_str for x in ["health", "medical", "mediclaim", "care"]):
-                        base_rule["lob"] = "Health"
-                    elif any(x in check_str for x in ["life", "term", "endowment"]):
-                        base_rule["lob"] = "Life"
+                base_rule["lob"] = "Motor"
 
                 # Read flat rates if any
                 flat_rates = {}
@@ -871,12 +932,25 @@ class ExcelParserService:
                         # normalization spec — age-tiered cells are SLAB, not NON_SLAB).
                         age_tiers = parse_tiered_rate_text(rate_val)
 
-                        if age_tiers is not None and len({pct for _, _, pct in age_tiers}) >= 2:
+                        if age_tiers is not None and len({t["rate_pct"] for t in age_tiers}) >= 2:
                             tier_rule_data = rule_data.copy()
 
                             status, warnings = RuleValidator.validate_rule(tier_rule_data, existing_keys)
-                            rate_text_clean = str(rate_val).replace("\r", "").replace("\n", "; ")
-                            warnings.append(f"Slab classification: Generated from vehicle-age-tiered rate text: '{rate_text_clean}'")
+                            
+                            # Build structured explanation block
+                            explanation_lines = ["Vehicle Age Rules"]
+                            for t in age_tiers:
+                                if t.get("operator"):
+                                    val_str = str(int(t["value"])) if t["value"].is_integer() else str(t["value"])
+                                    expr = f"Age {t['operator']} {val_str}"
+                                else:
+                                    expr = f"Age {t['slab_from']}-{t['slab_to']}"
+                                explanation_lines.append(f"  {expr} → {t['rate_pct']}%")
+                            
+                            explanation_lines.append(f'\nSource:\n"{rate_val}"')
+                            explanation_text = "\n".join(explanation_lines)
+                            warnings.append(explanation_text)
+                            
                             tier_rule_data["raw_json"] = raw_json.copy()
                             tier_rule_data["validation_status"] = status
                             tier_rule_data["warnings"] = warnings
@@ -898,16 +972,20 @@ class ExcelParserService:
                                 {
                                     "payin_type": "PERCENTAGE",
                                     "premium_type": {"payin_od": "OD", "payin_tp": "TP"}.get(rate_field, "NET"),
-                                    "slab_from": age_from,
-                                    "slab_to": age_to,
-                                    "payin_od": pct if rate_field == "payin_od" else None,
+                                    "slab_from": t["slab_from"],
+                                    "slab_to": t["slab_to"],
+                                    "payin_od": t["rate_pct"] if rate_field == "payin_od" else None,
                                     "payout_od": None,
-                                    "payin_tp": pct if rate_field == "payin_tp" else None,
+                                    "payin_tp": t["rate_pct"] if rate_field == "payin_tp" else None,
                                     "payout_tp": None,
-                                    "payin_net": pct if rate_field == "payin_net" else None,
+                                    "payin_net": t["rate_pct"] if rate_field == "payin_net" else None,
                                     "payout_net": None,
+                                    "condition_field": t["condition_field"],
+                                    "operator": t["operator"],
+                                    "value": t["value"],
+                                    "original_text": t["original_text"]
                                 }
-                                for age_from, age_to, pct in age_tiers
+                                for t in age_tiers
                             ]
                             all_parsed_rules.append(tier_rule_data)
                             sheet_rules_count += 1
@@ -983,9 +1061,6 @@ class ExcelParserService:
                             # concept but wasn't a recognized synonym (see
                             # SLAB_HINT_KEYWORDS / _classify_columns).
                             slab_from, slab_to = extract_numeric_range(param_vals.get("_slab_hint_text"))
-
-                        if slab_from is not None and (slab_from == 0.0 or slab_from == 0):
-                            slab_from = 1.0
 
                         payin_type = str(flat_rates.get("payin_type")).strip() if flat_rates.get("payin_type") is not None else "PERCENTAGE"
                         premium_type = str(flat_rates.get("premium_type")).strip() if flat_rates.get("premium_type") is not None else None
@@ -1155,17 +1230,7 @@ class ExcelParserService:
                         slab_obj["slab_to"] = slab_to
                         merged_slabs.append(slab_obj)
                 
-                # Normalize and deduplicate slabs
-                is_age_slab = False
-                if base_rule.get("warnings"):
-                    for w in base_rule["warnings"]:
-                        if "vehicle-age-tiered" in str(w).lower() or "age-tiered" in str(w).lower():
-                            is_age_slab = True
-                            break
-                for s in merged_slabs:
-                    if not is_age_slab and s.get("slab_from") is not None and (s["slab_from"] == 0.0 or s["slab_from"] == 0):
-                        s["slab_from"] = 1.0
-
+                # Deduplicate slabs
                 unique_slabs = []
                 seen_slab_keys = set()
                 for s in merged_slabs:
@@ -1200,13 +1265,6 @@ class ExcelParserService:
                 
                 final_rules.append(base_rule)
                 
-        # Post-process: ensure all slab_from values equal to 0.0 or 0 are normalized to 1.0
-        for r in final_rules:
-            if r.get("slabs"):
-                for s in r["slabs"]:
-                    if s.get("slab_from") is not None and (s["slab_from"] == 0.0 or s["slab_from"] == 0):
-                        s["slab_from"] = 1.0
-                        
         print(f"[WORKBOOK PARSING COMPLETED] Grouped {len(all_parsed_rules)} rules into {len(final_rules)} merged rules.")
         return final_rules
 

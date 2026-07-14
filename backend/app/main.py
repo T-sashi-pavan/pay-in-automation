@@ -47,6 +47,25 @@ app.include_router(uploads_router)
 app.include_router(rule_edit_router)
 app.include_router(master_data_router)
 
+@app.on_event("startup")
+def on_startup():
+    from backend.app.database.session import engine
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        columns_to_add = [
+            ("condition_field", "VARCHAR(255)"),
+            ("operator", "VARCHAR(50)"),
+            ("value", "FLOAT"),
+            ("original_text", "TEXT")
+        ]
+        for col_name, col_type in columns_to_add:
+            try:
+                conn.execute(text(f"ALTER TABLE slab_details ADD COLUMN {col_name} {col_type}"))
+                conn.commit()
+                logger.info(f"Added column {col_name} to slab_details successfully.")
+            except Exception:
+                pass
+
 @app.get("/")
 def read_root():
     return {"message": "Pay-In Automation Dashboard API is running."}

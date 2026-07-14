@@ -78,6 +78,10 @@ async def upload_excel(
         else:
             parsed_rules = excel_parser_service.parse_workbook(file_bytes, filename=file.filename)
 
+        if parsed_rules:
+            for r in parsed_rules:
+                r["lob"] = "Motor"
+
         if not parsed_rules:
             # Update status to failed if no rules could be parsed. For scanned
             # PDFs this also fires when OCR ran but produced no usable data

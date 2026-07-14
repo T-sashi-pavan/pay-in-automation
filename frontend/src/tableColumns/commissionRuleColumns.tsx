@@ -83,22 +83,31 @@ const tiersSummaryColumn: ColumnDef<any> = {
   header: 'Tiers',
   enableSorting: false,
   cell: ({ row }) => {
-    const slabs = (row.original.slabs || []) as { slab_from: number | null; slab_to: number | null }[];
+    const slabs = (row.original.slabs || []) as { slab_from: number | string | null; slab_to: number | string | null }[];
     if (slabs.length === 0) return <span className="text-slate-400 dark:text-slate-600">N/A</span>;
-    const froms = slabs.map(s => s.slab_from).filter((v): v is number => v !== null);
-    const tos = slabs.map(s => s.slab_to).filter((v): v is number => v !== null);
+    
+    const froms = slabs.map(s => typeof s.slab_from === 'number' ? s.slab_from : parseFloat(s.slab_from as string)).filter(v => !isNaN(v));
     const min = froms.length ? Math.min(...froms) : null;
-    const max = tos.length ? Math.max(...tos) : null;
+    
+    const hasOpen = slabs.some(s => s.slab_to === 'OPEN' || s.slab_to === null || s.slab_to === undefined);
+    
+    let maxStr = 'OPEN';
+    if (!hasOpen) {
+      const tos = slabs.map(s => typeof s.slab_to === 'number' ? s.slab_to : parseFloat(s.slab_to as string)).filter(v => !isNaN(v));
+      const max = tos.length ? Math.max(...tos) : null;
+      maxStr = max !== null ? max.toLocaleString() : 'OPEN';
+    }
+
+    const minStr = min !== null ? min.toLocaleString() : '-';
+
     return (
       <span className="inline-flex items-center gap-1.5">
         <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-purple-50 dark:bg-purple-500/10 text-purple-600 dark:text-purple-400">
           {slabs.length} tier{slabs.length !== 1 ? 's' : ''}
         </span>
-        {(min !== null || max !== null) && (
-          <span className="text-xs text-slate-500 dark:text-slate-400 font-mono">
-            {min !== null ? min.toLocaleString() : '-'}–{max !== null ? max.toLocaleString() : '∞'}
-          </span>
-        )}
+        <span className="text-xs text-slate-500 dark:text-slate-400 font-mono">
+          {minStr}–{maxStr}
+        </span>
       </span>
     );
   },

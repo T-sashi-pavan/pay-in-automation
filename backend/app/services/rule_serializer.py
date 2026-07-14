@@ -34,14 +34,8 @@ def _serialize_slab(s, is_age_slab: bool = False) -> Dict[str, Any]:
     if s.slab_to is None:
         defaulted_fields.append("slab_to")
 
-    # If it's an age slab, 0 is a valid start age and should not be overridden to 1.
-    # Also default slab_to to 99 instead of 500,000.
-    default_slab_from = 0 if is_age_slab else 1
-    default_slab_to = 99 if is_age_slab else 500000
-
-    slab_from_val = s.slab_from if s.slab_from is not None else default_slab_from
-    if not is_age_slab and (slab_from_val == 0 or slab_from_val == 0.0):
-        slab_from_val = 1
+    # If slab_from is None, default to 1. Do NOT auto-adjust 0.0 or 0 to 1.0!
+    slab_from_val = s.slab_from if s.slab_from is not None else 1
 
     return {
         "id": s.id,
@@ -50,13 +44,17 @@ def _serialize_slab(s, is_age_slab: bool = False) -> Dict[str, Any]:
             s.premium_type, "OD" if payin_od is not None else ("TP" if payin_tp is not None else "NET")
         ),
         "slab_from": slab_from_val,
-        "slab_to": s.slab_to if s.slab_to is not None else default_slab_to,
+        "slab_to": s.slab_to if s.slab_to is not None else "OPEN",
         "payin_od": payin_od,
         "payout_od": compute_payout(payin_od),
         "payin_tp": payin_tp,
         "payout_tp": compute_payout(payin_tp),
         "payin_net": payin_net,
         "payout_net": compute_payout(payin_net),
+        "condition_field": getattr(s, "condition_field", None),
+        "operator": getattr(s, "operator", None),
+        "value": getattr(s, "value", None),
+        "original_text": getattr(s, "original_text", None),
         "_defaulted_fields": defaulted_fields,
     }
 

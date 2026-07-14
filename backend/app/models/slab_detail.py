@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, ForeignKey, Text
 from sqlalchemy.orm import relationship
 from backend.app.database.session import Base
 
@@ -19,6 +19,11 @@ class SlabDetail(Base):
     payout_tp = Column(Float, nullable=True)
     payin_net = Column(Float, nullable=True)
     payout_net = Column(Float, nullable=True)
+
+    condition_field = Column(String(255), nullable=True)
+    operator = Column(String(50), nullable=True)
+    value = Column(Float, nullable=True)
+    original_text = Column(Text, nullable=True)
 
     # Relationships
     rule = relationship("CommissionRule", back_populates="slabs")
