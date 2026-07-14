@@ -26,7 +26,7 @@
     "effective_date": ["effective date", "date", "effective_from", "start date", "w.e.f", "w.e.f.", "date of effect", "change date"],
     "remarks": ["remarks", "remark", "notes", "comment", "clause", "uw remarks", "remarks 1", "remarks 2", "condition", "uw's condition"],
     
-    "payin_od": ["payin od", "payin_od", "pay-in od", "pay in od", "payin od %", "pay-in od %", "od payin", "insurer od %", "od commission", "od pay-in", "broker", "broker ", "dis %", "discount %", "discount", "cd1", "cd2", "cd 1", "cd 2"],
+    "payin_od": ["payin od", "payin_od", "pay-in od", "pay in od", "payin od %", "pay-in od %", "od payin", "insurer od %", "od commission", "od pay-in", "broker", "broker ", "cd1", "cd2", "cd 1", "cd 2"],
     "payout_od": ["payout od", "payout_od", "pay-out od", "pay out od", "payout od %", "payout od %", "od payout", "payout od %", "od commission payout", "od pay-out"],
     "payin_tp": ["payin tp", "payin_tp", "pay-in tp", "pay in tp", "payin tp %", "pay-in tp %", "tp payin", "insurer tp %", "tp commission", "tp pay-in"],
     "payout_tp": ["payout tp", "payout_tp", "pay-out tp", "pay out tp", "payout tp %", "payout tp %", "tp payout", "payout tp %", "tp commission payout", "tp pay-out"],
@@ -40,7 +40,7 @@
     
     "payin_type": ["payin type", "payin_type", "commission type", "pay-in type"],
     "premium_type": ["premium type", "premium_type", "type of premium", "premium basis"],
-    "slab_from": ["slab from", "slab_from", "limit from", "from", "range from", "min slab", "premium from", "idv from", "idv_from", "idv slab from", "tier from", "band from", "si slab from", "premium band from", "discount band from"],
-    "slab_to": ["slab to", "slab_to", "limit to", "to", "range to", "max slab", "premium to", "idv to", "idv_to", "idv slab to", "tier to", "band to", "si slab to", "premium band to", "discount band to"]
+    "slab_from": ["slab from", "slab_from", "limit from", "from", "range from", "min slab", "min lab", "premium from", "idv from", "idv_from", "idv slab from", "tier from", "band from", "si slab from", "premium band from", "discount band from"],
+    "slab_to": ["slab to", "slab_to", "limit to", "to", "range to", "max slab", "max lab", "premium to", "idv to", "idv_to", "idv slab to", "tier to", "band to", "si slab to", "premium band to", "discount band to"]
   }
 }

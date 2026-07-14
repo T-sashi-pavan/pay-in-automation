@@ -807,10 +807,20 @@ class ExcelParserService:
                 # enrichment) had nothing to read for exactly the descriptive text
                 # it needs. This is purely additive — doesn't change classification
                 # or any existing field mapping.
-                for u in [c for c in classifications if c["type"] == "UNKNOWN"]:
-                    val = self._get_scalar_value(row, u["header"])
-                    if val is not None and str(val).strip() != "":
-                        raw_json[u["header"]] = val
+                custom_remarks = []
+                for u in classifications:
+                    if u["type"] == "UNKNOWN" or (u["type"] == "PARAM" and u["field"] == "_slab_hint_text"):
+                        val = self._get_scalar_value(row, u["header"])
+                        if val is not None and str(val).strip() not in ("", "None", "nan", "0", "0%"):
+                            raw_json[u["header"]] = val
+                            custom_remarks.append(f"{u['header']}: {str(val).strip()}")
+                
+                if custom_remarks:
+                    custom_str = " | ".join(custom_remarks)
+                    if base_rule.get("remarks") and base_rule["remarks"] != "ALL":
+                        base_rule["remarks"] = f"{base_rule['remarks']} | {custom_str}"
+                    else:
+                        base_rule["remarks"] = custom_str
 
                 if is_pivot:
                     # For pivot tables, each location column is a rate entry
@@ -828,6 +838,13 @@ class ExcelParserService:
                         rule_data["state"] = loc["location"]
                         if loc.get("zone"):
                             rule_data["zone"] = loc["zone"]
+                            
+                        # Preserve column header in remarks to keep distinct rate columns separate
+                        col_hdr = str(loc["header"]).strip()
+                        if rule_data.get("remarks") and rule_data["remarks"] != "ALL":
+                            rule_data["remarks"] = f"{rule_data['remarks']} | Column: {col_hdr}"
+                        else:
+                            rule_data["remarks"] = f"Column: {col_hdr}"
                         
                         # Heuristics to determine whether this location column represents OD or TP
                         header_lower = loc["header"].lower()
@@ -858,6 +875,7 @@ class ExcelParserService:
                             tier_rule_data = rule_data.copy()
 
                             status, warnings = RuleValidator.validate_rule(tier_rule_data, existing_keys)
+                            warnings.append("Slab classification: Generated from vehicle-age-tiered rate text detected in the rate cell.")
                             tier_rule_data["raw_json"] = raw_json.copy()
                             tier_rule_data["validation_status"] = status
                             tier_rule_data["warnings"] = warnings
@@ -943,6 +961,8 @@ class ExcelParserService:
                     
                     # Validate
                     status, warnings = RuleValidator.validate_rule(rule_data, existing_keys)
+                    if is_slab:
+                        warnings.append("Slab classification: Explicit slab limits (from/to) detected in column headers (e.g. IDV slab, SI slab, premium slab, etc.).")
                     
                     rule_data["raw_json"] = raw_json
                     rule_data["validation_status"] = status
@@ -1079,6 +1099,11 @@ class ExcelParserService:
                 base_rule = group[0].copy()
                 base_rule["commission_type"] = "SLAB"
                 base_rule["slab_configuration"] = True
+                
+                # Add slab classification reason
+                if "warnings" not in base_rule or base_rule["warnings"] is None:
+                    base_rule["warnings"] = []
+                base_rule["warnings"].append("Slab classification: Merged from multiple rows sharing identical business filters but carrying differing rate values.")
                 
                 merged_slabs = []
                 for rule_item in group:
