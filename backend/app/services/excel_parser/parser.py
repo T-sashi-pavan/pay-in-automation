@@ -443,18 +443,33 @@ class ExcelParserService:
                             matched_param = std
 
             # Check if this column is a Location Column using exact word matching
-            matched_location = None
+            matched_locations = []
             for w in words:
                 if w in STATES_LIST:
-                    matched_location = STATE_ABBR_MAP.get(w, w.upper())
-                    break
+                    abbr = STATE_ABBR_MAP.get(w, w.upper())
+                    for a in abbr.split(","):
+                        a_clean = a.strip().upper()
+                        if a_clean not in matched_locations:
+                            matched_locations.append(a_clean)
 
-            if matched_location:
+            if matched_locations:
+                matched_location = ", ".join(matched_locations)
+                
+                matched_zone = None
+                header_lower = h.lower()
+                for dir_word in ["east", "west", "north", "south", "central", "rest of", "ro"]:
+                    if dir_word in header_lower:
+                        clean_dir = dir_word.replace(" ", "").capitalize()
+                        prefix = matched_locations[0]
+                        matched_zone = f"{prefix}-{clean_dir}"
+                        break
+
                 classifications.append({
                     "index": idx,
                     "header": h,
                     "type": "LOCATION",
-                    "location": matched_location
+                    "location": matched_location,
+                    "zone": matched_zone
                 })
             elif matched_param:
                 classifications.append({
@@ -842,6 +857,8 @@ class ExcelParserService:
                         rule_data = base_rule.copy()
                         rule_data["sheet_name"] = sheet_name
                         rule_data["state"] = loc["location"]
+                        if loc.get("zone"):
+                            rule_data["zone"] = loc["zone"]
                         
                         # Heuristics to determine whether this location column represents OD or TP
                         header_lower = loc["header"].lower()

@@ -511,7 +511,7 @@ def export_extracted_records(
         zone=zone, source=source, rto=rto, validation_status=validation_status,
         commission_type=commission_type, has_slabs=has_slabs, vehicle_age=vehicle_age,
     )
-    rules = query.all()
+    rules = query.order_by(CommissionRule.id.asc()).all()
 
     try:
         buffer = build_export_workbook(rules, db)
@@ -571,7 +571,7 @@ def export_upload_json(
         zone=zone, source=source, rto=rto, validation_status=validation_status,
         commission_type=commission_type, has_slabs=has_slabs, vehicle_age=vehicle_age,
     )
-    rules = query.all()
+    rules = query.order_by(CommissionRule.id.asc()).all()
     
     serialized_rules = []
     for r in rules:
@@ -851,7 +851,7 @@ def search_all_rules(payload: Dict[str, Any], db: Session = Depends(get_db)):
             )
             query = query.filter(search_filter)
             
-        query = query.order_by(desc(UploadHistory.uploaded_at), desc(CommissionRule.id))
+        query = query.order_by(desc(UploadHistory.uploaded_at), CommissionRule.id.asc())
         
         total_items = query.count()
         offset = (page - 1) * limit

@@ -123,7 +123,7 @@ def build_export_workbook(rules: List[CommissionRule], db: Session) -> BytesIO:
 
         for slab in data.get("slabs") or []:
             slab_defaulted = set(slab.get("_defaulted_fields") or [])
-            tier_values = business_values + [slab.get(field) for _, field in SLAB_TIER_COLUMNS]
+            tier_values = [None] * business_col_count + [slab.get(field) for _, field in SLAB_TIER_COLUMNS]
             ws_sl.append(tier_values)
             tier_row = ws_sl.max_row
             ws_sl.row_dimensions[tier_row].outline_level = 1
