@@ -6,6 +6,7 @@ export interface UploadHistory {
   uploaded_at: string;
   status: 'PROCESSING' | 'COMPLETED' | 'FAILED';
   total_records: number;
+  has_slabs?: boolean;
 }
 
 export interface SlabDetail {

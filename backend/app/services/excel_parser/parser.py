@@ -97,14 +97,6 @@ def classify_rule_type(sheet_name: str, headers: List[str], base_rule: Dict[str,
         has_slab_values = flat_rates.get("slab_from") is not None or flat_rates.get("slab_to") is not None
         if has_slab_keyword or has_slab_values:
             return "SLAB"
-        range_regex = re.compile(
-            r'(?:[><=]+\s*\d+|\b(?:upto|above|below|under|exceeding)\s*\d+|\b\d+\s*(?:-|to|<=|>=|<|>)\s*\d+)',
-            re.IGNORECASE
-        )
-        for field in ("product", "sub_class", "remarks"):
-            val = base_rule.get(field)
-            if val and range_regex.search(str(val)):
-                return "SLAB"
         return "NON_SLAB"
 
     # --- GENERAL CLASSIFICATION ENGINE ---
@@ -267,12 +259,12 @@ SLAB_HINT_KEYWORDS = [
 
 # Known locations in Indian insurance grids
 STATES_LIST = [
-    "andaman", "nicobar", "andhra pradesh", "andra pradesh", "ap/ts", "ap", "ts", "telangana", 
-    "telengana", "arunachal", "assam", "bihar", "chandigarh", "chhattisgarh", "cg", "dadra", 
-    "daman", "diu", "delhi", "ncr", "dl", "goa", "gujarat", "gj", "haryana", "hr", "himachal", 
+    "andaman", "nicobar", "andhra pradesh", "andra pradesh", "ap/ts", "ap", "ts", "tg", "telangana", 
+    "telengana", "arunachal", "ar", "assam", "as", "bihar", "bh", "chandigarh", "chhattisgarh", "cg", "dadra", 
+    "daman", "diu", "delhi", "ncr", "dl", "goa", "ga", "gujarat", "gj", "haryana", "hr", "himachal", 
     "jammu", "kashmir", "jharkhand", "jh", "karnataka", "ka", "kerala", "kl", "ladakh", 
-    "lakshadweep", "madhya pradesh", "mp", "maharashtra", "mh", "manipur", "meghalaya", 
-    "mizoram", "nagaland", "odisha", "orissa", "puducherry", "pondicherry", "punjab", "pb", 
+    "lakshadweep", "madhya pradesh", "mp", "maharashtra", "mh", "manipur", "meghalaya", "ml", 
+    "mizoram", "nagaland", "nl", "odisha", "orissa", "puducherry", "pondicherry", "punjab", "pb", 
     "rajasthan", "rj", "sikkim", "tamil nadu", "tn", "tripura", "tr", "uttar pradesh", "up", 
     "uttarakhand", "west bengal", "wb", "pan india", "ahmedabad", "bangalore", "bhubaneshwar", 
     "mumbai", "nagpur", "pune", "surat", "vadodara", "vijaywada", "vishakapatnam", "central odisha",
@@ -285,12 +277,15 @@ STATE_ABBR_MAP = {
     "andhra pradesh": "AP",
     "telangana": "TS",
     "telengana": "TS",
+    "tg": "TS",
     "tamil nadu": "TN",
     "tn": "TN",
     "karnataka": "KA",
     "ka": "KA",
     "maharashtra": "MH",
     "mh": "MH",
+    "goa": "GA",
+    "ga": "GA",
     "gujarat": "GJ",
     "gj": "GJ",
     "bihar": "BR",
@@ -323,6 +318,12 @@ STATE_ABBR_MAP = {
     "tripura": "TR",
     "tr": "TR",
     "assam/tripura": "AS, TR",
+    "meghalaya": "ML",
+    "ml": "ML",
+    "arunachal": "AR",
+    "ar": "AR",
+    "nagaland": "NL",
+    "nl": "NL",
     "pan india": "ALL"
 }
 

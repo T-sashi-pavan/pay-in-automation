@@ -65,14 +65,14 @@ class ValueNormalizer:
         # State abbreviation mapping dictionary
         state_map = {
             "andhra pradesh": "AP", "andra pradesh": "AP", "ap/ts": "AP, TS", "ap": "AP", "ts": "TS", 
-            "telangana": "TS", "telengana": "TS", "arunachal": "AR", "arunachal pradesh": "AR", 
-            "assam": "AS", "as": "AS", "bihar": "BR", "br": "BR", "chandigarh": "CH", "ch": "CH", 
-            "chhattisgarh": "CG", "cg": "CG", "delhi": "DL", "dl": "DL", "ncr": "DL", "goa": "GA", 
+            "tg": "TS", "telangana": "TS", "telengana": "TS", "arunachal": "AR", "arunachal pradesh": "AR", 
+            "ar": "AR", "assam": "AS", "as": "AS", "bihar": "BR", "br": "BR", "bh": "BR", "chandigarh": "CH", "ch": "CH", 
+            "chhattisgarh": "CG", "cg": "CG", "delhi": "DL", "dl": "DL", "ncr": "DL", "goa": "GA", "ga": "GA",
             "gujarat": "GJ", "gj": "GJ", "haryana": "HR", "hr": "HR", "himachal": "HP", "hp": "HP", 
             "jammu": "JK", "kashmir": "JK", "jk": "JK", "jharkhand": "JH", "jh": "JH", 
             "karnataka": "KA", "ka": "KA", "kerala": "KL", "kl": "KL", "ladakh": "LA", 
             "madhya pradesh": "MP", "mp": "MP", "maharashtra": "MH", "mh": "MH", "manipur": "MN", 
-            "meghalaya": "ML", "mizoram": "MZ", "nagaland": "NL", "odisha": "OD", "orissa": "OD", 
+            "meghalaya": "ML", "ml": "ML", "mizoram": "MZ", "nagaland": "NL", "nl": "NL", "odisha": "OD", "orissa": "OD", 
             "od": "OD", "or": "OD", "puducherry": "PY", "pondicherry": "PY", "punjab": "PB", "pb": "PB", 
             "rajasthan": "RJ", "rj": "RJ", "sikkim": "SK", "tamil nadu": "TN", "tn": "TN", 
             "tripura": "TR", "tr": "TR", "uttar pradesh": "UP", "up": "UP", "uttarakhand": "UK", 

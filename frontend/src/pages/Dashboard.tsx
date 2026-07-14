@@ -119,6 +119,18 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const { theme, toggleTheme } = useTheme();
   const { openMobileSidebar } = useSidebar();
 
+  const selectedUpload = uploads.find(u => u.id === selectedUploadId);
+  const hasSlabs = selectedUpload?.has_slabs ?? false;
+
+  // Auto-switch to Non-Slab tab if the selected upload has no slabs
+  useEffect(() => {
+    if (selectedUploadId !== null && selectedUpload) {
+      if (!selectedUpload.has_slabs && filters.commission_type === 'SLAB') {
+        setFilters(prev => ({ ...prev, commission_type: 'NON_SLAB' }));
+      }
+    }
+  }, [selectedUploadId, selectedUpload, filters.commission_type, setFilters]);
+
   const [searchInput, setSearchInput] = useState(filters.search);
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
   const toggleRowExpanded = (rowId: string) => {
@@ -460,23 +472,30 @@ export const Dashboard: React.FC<DashboardProps> = ({
           {([
             { key: 'NON_SLAB', label: 'Non-Slab' },
             { key: 'SLAB', label: 'Slab' },
-          ] as const).map(({ key, label }) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setFilters(prev => ({ ...prev, commission_type: key }))}
-              className={`relative py-2 text-sm font-medium transition-colors duration-150 cursor-pointer ${
-                currentTab === key
-                  ? 'text-[#4F46E5] dark:text-indigo-400'
-                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
-              }`}
-            >
-              {label}
-              {currentTab === key && (
-                <span className="absolute left-0 right-0 -bottom-2 h-0.5 bg-[#4F46E5] dark:bg-indigo-400 rounded-full" />
-              )}
-            </button>
-          ))}
+          ] as const).map(({ key, label }) => {
+            const isDisabled = key === 'SLAB' && !hasSlabs;
+            return (
+              <button
+                key={key}
+                type="button"
+                disabled={isDisabled}
+                onClick={() => !isDisabled && setFilters(prev => ({ ...prev, commission_type: key }))}
+                className={`relative py-2 text-sm font-medium transition-colors duration-150 ${
+                  isDisabled
+                    ? 'opacity-40 cursor-not-allowed text-slate-400 dark:text-slate-600'
+                    : currentTab === key
+                    ? 'text-[#4F46E5] dark:text-indigo-400 cursor-pointer'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 cursor-pointer'
+                }`}
+                title={isDisabled ? 'No slab details extracted for this file' : undefined}
+              >
+                {label}
+                {currentTab === key && !isDisabled && (
+                  <span className="absolute left-0 right-0 -bottom-2 h-0.5 bg-[#4F46E5] dark:bg-indigo-400 rounded-full" />
+                )}
+              </button>
+            );
+          })}
         </div>
 
         {/* Fullscreen + More Options */}

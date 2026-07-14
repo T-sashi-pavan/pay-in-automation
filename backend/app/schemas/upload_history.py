@@ -8,6 +8,7 @@ class UploadHistoryBase(BaseModel):
     uploaded_by: Optional[str] = "System"
     status: str = "PROCESSING"
     total_records: int = 0
+    has_slabs: Optional[bool] = False
 
 class UploadHistoryCreate(UploadHistoryBase):
     pass

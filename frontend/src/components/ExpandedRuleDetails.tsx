@@ -171,7 +171,7 @@ export const ExpandedRuleDetails: React.FC<ExpandedRuleDetailsProps> = ({ rule, 
                         <div key={i} className="bg-slate-50 dark:bg-slate-900/20 border border-[#E5E7EB] dark:border-slate-900/60 rounded-xl p-3 flex flex-col justify-center">
                           <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">{f.label}</span>
                           <span
-                            className={`text-xs font-semibold mt-1 truncate ${defaulted ? 'text-amber-600 dark:text-amber-400 italic' : 'text-slate-800 dark:text-slate-200'}`}
+                            className={`text-xs font-semibold mt-1 truncate ${defaulted ? 'text-purple-600 dark:text-purple-400 italic' : 'text-slate-800 dark:text-slate-200'}`}
                             title={defaulted ? DEFAULTED_TITLE : (f.value?.toString() || '')}
                           >
                             {f.value !== null && f.value !== undefined && f.value !== '' ? String(f.value) : <span className="text-slate-300 dark:text-slate-700 italic">None</span>}
@@ -246,7 +246,7 @@ export const ExpandedRuleDetails: React.FC<ExpandedRuleDetailsProps> = ({ rule, 
                         <div key={i} className="bg-slate-50 dark:bg-slate-900/20 border border-[#E5E7EB] dark:border-slate-900/60 rounded-xl p-3 flex flex-col justify-center">
                           <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">{f.label}</span>
                           <span
-                            className={`text-xs font-semibold mt-1 truncate ${defaulted ? 'text-amber-600 dark:text-amber-400 italic' : 'text-slate-800 dark:text-slate-200'}`}
+                            className={`text-xs font-semibold mt-1 truncate ${defaulted ? 'text-purple-600 dark:text-purple-400 italic' : 'text-slate-800 dark:text-slate-200'}`}
                             title={defaulted ? DEFAULTED_TITLE : (f.value?.toString() || '')}
                           >
                             {f.value !== null && f.value !== undefined && f.value !== '' ? String(f.value) : <span className="text-slate-300 dark:text-slate-700 italic">None</span>}
@@ -295,7 +295,7 @@ export const ExpandedRuleDetails: React.FC<ExpandedRuleDetailsProps> = ({ rule, 
                                 {(() => {
                                   const slabDefaulted = slab._defaulted_fields || [];
                                   const cellCls = (field: string, base: string) =>
-                                    slabDefaulted.includes(field) ? 'text-amber-600 dark:text-amber-400 italic' : base;
+                                    slabDefaulted.includes(field) ? 'text-purple-600 dark:text-purple-400 italic' : base;
                                   const cellTitle = (field: string) => slabDefaulted.includes(field) ? DEFAULTED_TITLE : undefined;
                                   return (
                                     <>

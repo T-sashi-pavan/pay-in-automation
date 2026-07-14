@@ -232,6 +232,10 @@ def get_dashboard_summary(db: Session = Depends(get_db)):
                     "status": u.status,
                     "total_records": u.total_records,
                     "uploaded_at": u.uploaded_at.isoformat() if u.uploaded_at else None,
+                    "has_slabs": db.query(CommissionRule).filter(
+                        CommissionRule.upload_id == u.id,
+                        CommissionRule.commission_type == "SLAB"
+                    ).first() is not None
                 }
                 for u in recent_uploads
             ],
@@ -248,7 +252,24 @@ def get_uploads(db: Session = Depends(get_db)):
     """
     try:
         histories = db.query(UploadHistory).order_by(desc(UploadHistory.uploaded_at)).all()
-        return histories
+        results = []
+        for h in histories:
+            has_slabs = db.query(CommissionRule).filter(
+                CommissionRule.upload_id == h.id,
+                CommissionRule.commission_type == "SLAB"
+            ).first() is not None
+            
+            results.append({
+                "id": h.id,
+                "filename": h.filename,
+                "company": h.company,
+                "uploaded_by": h.uploaded_by,
+                "status": h.status,
+                "total_records": h.total_records,
+                "uploaded_at": h.uploaded_at,
+                "has_slabs": has_slabs
+            })
+        return results
     except Exception as e:
         logger.error(f"Failed to fetch uploads: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve upload history.")

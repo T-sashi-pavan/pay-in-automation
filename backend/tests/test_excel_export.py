@@ -46,19 +46,19 @@ def test_export_workbook_has_two_sheets_with_correct_row_split():
 
     assert wb.sheetnames == ["Non-Slab", "Slab"]
     assert wb["Non-Slab"].max_row == 2  # header + 1 rule
-    assert wb["Slab"].max_row == 4      # header + 1 parent row + 2 tier rows
+    assert wb["Slab"].max_row == 3      # header + 1 parent row (with first tier nested) + 1 extra tier row
 
 
-def test_export_workbook_flags_defaulted_cells_in_orange():
-    rule = _make_rule(id=1, lob=None)  # lob is null on the stub -> should be defaulted/orange
+def test_export_workbook_flags_defaulted_cells_in_purple():
+    rule = _make_rule(id=1, lob=None)  # lob is null on the stub -> should be defaulted/purple
     buffer = build_export_workbook([rule], db=None)
     wb = load_workbook(BytesIO(buffer.read()))
 
     ws = wb["Non-Slab"]
     lob_cell = ws.cell(row=2, column=1)  # LOB is the first business column
     assert lob_cell.value == "Motor"  # default_or's fallback value
-    assert lob_cell.font.color.rgb == "00C2410C"  # the amber "this is a default" color
+    assert lob_cell.font.color.rgb == "006D28D9"  # the purple "this is a default" color
 
     policy_type_cell = ws.cell(row=2, column=5)  # Policy Type — genuinely populated on the stub
     assert policy_type_cell.value == "Comprehensive"
-    assert policy_type_cell.font.color is None or policy_type_cell.font.color.rgb != "00C2410C"
+    assert policy_type_cell.font.color is None or policy_type_cell.font.color.rgb != "006D28D9"

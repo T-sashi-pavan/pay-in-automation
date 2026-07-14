@@ -7,8 +7,22 @@ from backend.app.services import master_data_service
 from backend.app.services.field_normalizer import default_or, derive_plan_type, compute_payout, clean
 
 
+def to_percentage_number(val: Any) -> Any:
+    if val is None:
+        return None
+    try:
+        f_val = float(val)
+        if 0.0 < abs(f_val) <= 1.0:
+            return round(f_val * 100.0, 4)
+        return f_val
+    except ValueError:
+        return val
+
+
 def _serialize_slab(s) -> Dict[str, Any]:
-    payin_od, payin_tp, payin_net = s.payin_od, s.payin_tp, s.payin_net
+    payin_od = to_percentage_number(s.payin_od)
+    payin_tp = to_percentage_number(s.payin_tp)
+    payin_net = to_percentage_number(s.payin_net)
 
     defaulted_fields: List[str] = []
     if clean(s.payin_type) is None:
@@ -63,8 +77,11 @@ def serialize_commission_rule(r: CommissionRule, db: Session) -> Dict[str, Any]:
     visually flag defaults instead of presenting them as indistinguishable
     from genuinely-extracted data.
     """
-    payin_od, payin_tp, payin_net = r.payin_od, r.payin_tp, r.payin_net
-    payin_reward, payin_scheme = r.payin_reward, r.payin_scheme
+    payin_od = to_percentage_number(r.payin_od)
+    payin_tp = to_percentage_number(r.payin_tp)
+    payin_net = to_percentage_number(r.payin_net)
+    payin_reward = to_percentage_number(r.payin_reward)
+    payin_scheme = to_percentage_number(r.payin_scheme)
 
     defaulted_fields: List[str] = []
     for field_key, raw_value in (

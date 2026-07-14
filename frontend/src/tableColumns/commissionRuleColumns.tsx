@@ -18,8 +18,8 @@ export interface ColumnFactoryOptions {
 }
 
 // A defaulted value (e.g. "ALL"/"NA" filled in because the source had nothing)
-// is flagged in amber/orange so it's visually distinct from a real extracted value.
-const DEFAULTED_CLASS = 'text-amber-600 dark:text-amber-400 italic';
+// is flagged in purple so it's visually distinct from a real extracted value.
+const DEFAULTED_CLASS = 'text-purple-600 dark:text-purple-400 italic';
 const DEFAULTED_TITLE = 'Default value — not extracted from the source file';
 
 function isFieldDefaulted(rowOriginal: any, field: string): boolean {

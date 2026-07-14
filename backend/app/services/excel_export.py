@@ -55,7 +55,7 @@ SLAB_TIER_COLUMNS: List[tuple] = [
 
 HEADER_FONT = Font(bold=True, color="FFFFFF")
 HEADER_FILL = PatternFill(start_color="4F46E5", end_color="4F46E5", fill_type="solid")
-DEFAULTED_FONT = Font(color="C2410C")  # amber-700 — flags a business-default value, not a real extracted one
+DEFAULTED_FONT = Font(color="6D28D9")  # purple-700 — flags a business-default value, not a real extracted one
 PARENT_ROW_FONT = Font(bold=True)
 PARENT_ROW_FILL = PatternFill(start_color="EEF2FF", end_color="EEF2FF", fill_type="solid")
 
@@ -111,25 +111,43 @@ def build_export_workbook(rules: List[CommissionRule], db: Session) -> BytesIO:
         defaulted = set(data.get("_defaulted_fields") or [])
         business_values = [data.get(field) for _, field in BUSINESS_COLUMNS]
 
-        # Parent/summary row — business-key columns only, tier columns blank.
-        ws_sl.append(business_values + [None] * len(SLAB_TIER_COLUMNS))
-        parent_row = ws_sl.max_row
-        for col_idx, (_, field) in enumerate(BUSINESS_COLUMNS, start=1):
-            cell = ws_sl.cell(row=parent_row, column=col_idx)
-            cell.font = DEFAULTED_FONT if field in defaulted else PARENT_ROW_FONT
-            cell.fill = PARENT_ROW_FILL
-        for col_idx in range(business_col_count + 1, business_col_count + len(SLAB_TIER_COLUMNS) + 1):
-            ws_sl.cell(row=parent_row, column=col_idx).fill = PARENT_ROW_FILL
-
-        for slab in data.get("slabs") or []:
-            slab_defaulted = set(slab.get("_defaulted_fields") or [])
-            tier_values = [None] * business_col_count + [slab.get(field) for _, field in SLAB_TIER_COLUMNS]
-            ws_sl.append(tier_values)
-            tier_row = ws_sl.max_row
-            ws_sl.row_dimensions[tier_row].outline_level = 1
+        slabs = data.get("slabs") or []
+        if slabs:
+            first_slab = slabs[0]
+            first_slab_values = [first_slab.get(field) for _, field in SLAB_TIER_COLUMNS]
+            ws_sl.append(business_values + first_slab_values)
+            parent_row = ws_sl.max_row
+            
+            for col_idx, (_, field) in enumerate(BUSINESS_COLUMNS, start=1):
+                cell = ws_sl.cell(row=parent_row, column=col_idx)
+                cell.font = DEFAULTED_FONT if field in defaulted else PARENT_ROW_FONT
+                cell.fill = PARENT_ROW_FILL
+                
+            first_slab_defaulted = set(first_slab.get("_defaulted_fields") or [])
             for col_idx, (_, field) in enumerate(SLAB_TIER_COLUMNS, start=business_col_count + 1):
-                if field in slab_defaulted:
-                    ws_sl.cell(row=tier_row, column=col_idx).font = DEFAULTED_FONT
+                cell = ws_sl.cell(row=parent_row, column=col_idx)
+                cell.fill = PARENT_ROW_FILL
+                if field in first_slab_defaulted:
+                    cell.font = DEFAULTED_FONT
+
+            for slab in slabs[1:]:
+                slab_defaulted = set(slab.get("_defaulted_fields") or [])
+                tier_values = [None] * business_col_count + [slab.get(field) for _, field in SLAB_TIER_COLUMNS]
+                ws_sl.append(tier_values)
+                tier_row = ws_sl.max_row
+                ws_sl.row_dimensions[tier_row].outline_level = 1
+                for col_idx, (_, field) in enumerate(SLAB_TIER_COLUMNS, start=business_col_count + 1):
+                    if field in slab_defaulted:
+                        ws_sl.cell(row=tier_row, column=col_idx).font = DEFAULTED_FONT
+        else:
+            ws_sl.append(business_values + [None] * len(SLAB_TIER_COLUMNS))
+            parent_row = ws_sl.max_row
+            for col_idx, (_, field) in enumerate(BUSINESS_COLUMNS, start=1):
+                cell = ws_sl.cell(row=parent_row, column=col_idx)
+                cell.font = DEFAULTED_FONT if field in defaulted else PARENT_ROW_FONT
+                cell.fill = PARENT_ROW_FILL
+            for col_idx in range(business_col_count + 1, business_col_count + len(SLAB_TIER_COLUMNS) + 1):
+                ws_sl.cell(row=parent_row, column=col_idx).fill = PARENT_ROW_FILL
 
     ws_sl.sheet_properties.outlinePr.summaryBelow = False
     _autosize_columns(ws_sl)
