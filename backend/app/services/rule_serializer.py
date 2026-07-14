@@ -19,7 +19,7 @@ def to_percentage_number(val: Any) -> Any:
         return val
 
 
-def _serialize_slab(s) -> Dict[str, Any]:
+def _serialize_slab(s, is_age_slab: bool = False) -> Dict[str, Any]:
     payin_od = to_percentage_number(s.payin_od)
     payin_tp = to_percentage_number(s.payin_tp)
     payin_net = to_percentage_number(s.payin_net)
@@ -34,14 +34,23 @@ def _serialize_slab(s) -> Dict[str, Any]:
     if s.slab_to is None:
         defaulted_fields.append("slab_to")
 
+    # If it's an age slab, 0 is a valid start age and should not be overridden to 1.
+    # Also default slab_to to 99 instead of 500,000.
+    default_slab_from = 0 if is_age_slab else 1
+    default_slab_to = 99 if is_age_slab else 500000
+
+    slab_from_val = s.slab_from if s.slab_from is not None else default_slab_from
+    if not is_age_slab and (slab_from_val == 0 or slab_from_val == 0.0):
+        slab_from_val = 1
+
     return {
         "id": s.id,
         "payin_type": default_or(s.payin_type, "NET"),
         "premium_type": default_or(
             s.premium_type, "OD" if payin_od is not None else ("TP" if payin_tp is not None else "NET")
         ),
-        "slab_from": s.slab_from if (s.slab_from is not None and s.slab_from != 0 and s.slab_from != 0.0) else 1,
-        "slab_to": s.slab_to if s.slab_to is not None else 500000,
+        "slab_from": slab_from_val,
+        "slab_to": s.slab_to if s.slab_to is not None else default_slab_to,
         "payin_od": payin_od,
         "payout_od": compute_payout(payin_od),
         "payin_tp": payin_tp,
@@ -99,6 +108,14 @@ def serialize_commission_rule(r: CommissionRule, db: Session) -> Dict[str, Any]:
     if r.vehicle_age_to is None:
         defaulted_fields.append("vehicle_age_to")
 
+    # Detect if this rule represents vehicle age slabs (Go Digit age-tiered cells)
+    is_age_slab = False
+    if r.warnings:
+        for w in r.warnings:
+            if "vehicle-age-tiered" in str(w).lower() or "age-tiered" in str(w).lower():
+                is_age_slab = True
+                break
+
     return {
         "id": r.id,
         "upload_id": r.upload_id,
@@ -149,6 +166,6 @@ def serialize_commission_rule(r: CommissionRule, db: Session) -> Dict[str, Any]:
         "validation_status": r.validation_status,
         "warnings": r.warnings,
         "raw_json": r.raw_json,
-        "slabs": [_serialize_slab(s) for s in r.slabs],
+        "slabs": [_serialize_slab(s, is_age_slab=is_age_slab) for s in r.slabs],
         "_defaulted_fields": defaulted_fields,
     }

@@ -875,7 +875,8 @@ class ExcelParserService:
                             tier_rule_data = rule_data.copy()
 
                             status, warnings = RuleValidator.validate_rule(tier_rule_data, existing_keys)
-                            warnings.append("Slab classification: Generated from vehicle-age-tiered rate text detected in the rate cell.")
+                            rate_text_clean = str(rate_val).replace("\r", "").replace("\n", "; ")
+                            warnings.append(f"Slab classification: Generated from vehicle-age-tiered rate text: '{rate_text_clean}'")
                             tier_rule_data["raw_json"] = raw_json.copy()
                             tier_rule_data["validation_status"] = status
                             tier_rule_data["warnings"] = warnings
@@ -1155,8 +1156,14 @@ class ExcelParserService:
                         merged_slabs.append(slab_obj)
                 
                 # Normalize and deduplicate slabs
+                is_age_slab = False
+                if base_rule.get("warnings"):
+                    for w in base_rule["warnings"]:
+                        if "vehicle-age-tiered" in str(w).lower() or "age-tiered" in str(w).lower():
+                            is_age_slab = True
+                            break
                 for s in merged_slabs:
-                    if s.get("slab_from") is not None and (s["slab_from"] == 0.0 or s["slab_from"] == 0):
+                    if not is_age_slab and s.get("slab_from") is not None and (s["slab_from"] == 0.0 or s["slab_from"] == 0):
                         s["slab_from"] = 1.0
 
                 unique_slabs = []
