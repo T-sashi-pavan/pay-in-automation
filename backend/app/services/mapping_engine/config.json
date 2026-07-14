@@ -4,8 +4,8 @@
     "file_type": ["file type", "file_type", "type of file", "excel type"],
     "insurance_company": ["insurance company", "insurer", "company", "insurance_company", "insurer name"],
     "product": ["product", "product name", "product_name", "product type", "segment", "prod", "products"],
-    "policy_type": ["policy type", "policy_type", "policy", "subtype", "type of policy", "policy_category", "section text", "bzi type", "business type", "type", "business type", "section text ", "section"],
-    "plan_type": ["plan type", "plan_type", "plan", "plan name"],
+    "policy_type": ["policy type", "policy_type", "policy", "subtype", "type of policy", "policy_category", "section text", "type", "section text ", "section"],
+    "plan_type": ["plan type", "plan_type", "plan", "plan name", "bzi type", "business type"],
     "sub_product": ["sub product", "sub_product", "sub-product", "carrier type"],
     "class_": ["class", "vehicle class", "class of vehicle"],
     "sub_class": ["sub class", "sub_class", "sub-class", "subclass"],
@@ -13,7 +13,7 @@
     "model": ["model", "vehicle model", "model name"],
     "fuel_type": ["fuel type", "fuel_type", "fuel", "fuel type name"],
     "body_type": ["body type", "body_type", "body"],
-    "vehicle_age": ["vehicle age", "age", "vehicle_age", "age of vehicle", "vehicle age years", "age group", "vehicle age cat", "uw remarks", "remarks 1"],
+    "vehicle_age": ["vehicle age", "age", "vehicle_age", "age of vehicle", "vehicle age years", "age group", "vehicle age cat"],
     "vehicle_age_from": ["vehicle age from", "vehicle_age_from", "age from"],
     "vehicle_age_to": ["vehicle age to", "vehicle_age_to", "age to"],
     "cpa_status": ["cpa status", "cpa", "cpa_status", "cpa cover"],
@@ -40,7 +40,7 @@
     
     "payin_type": ["payin type", "payin_type", "commission type", "pay-in type"],
     "premium_type": ["premium type", "premium_type", "type of premium", "premium basis"],
-    "slab_from": ["slab from", "slab_from", "limit from", "from", "range from", "min slab", "premium from", "idv from", "idv_from", "idv slab from", "cc", "cc range", "tier from", "band from", "si slab from", "premium band from", "discount band from"],
+    "slab_from": ["slab from", "slab_from", "limit from", "from", "range from", "min slab", "premium from", "idv from", "idv_from", "idv slab from", "tier from", "band from", "si slab from", "premium band from", "discount band from"],
     "slab_to": ["slab to", "slab_to", "limit to", "to", "range to", "max slab", "premium to", "idv to", "idv_to", "idv slab to", "tier to", "band to", "si slab to", "premium band to", "discount band to"]
   }
 }

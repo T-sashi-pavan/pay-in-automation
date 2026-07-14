@@ -490,9 +490,9 @@ class ExcelParserService:
             rule_data["cpa_status"] = "Yes"
 
         # 3. Fuel Type
-        if "petrol" in row_text_lower:
+        if "petrol" in row_text_lower and not any(x in row_text_lower for x in ["except petrol", "other than petrol"]):
             rule_data["fuel_type"] = "PETROL"
-        elif "diesel" in row_text_lower:
+        elif "diesel" in row_text_lower and not any(x in row_text_lower for x in ["except diesel", "other than diesel"]):
             rule_data["fuel_type"] = "DIESEL"
         elif "cng" in row_text_lower:
             rule_data["fuel_type"] = "CNG"
@@ -523,13 +523,23 @@ class ExcelParserService:
                 rule_data["model"] = model_name.upper()
                 break
 
-        # 6. Policy Type / Plan Type
-        if any(kw in row_text_lower for kw in ["saod", "standalone od", "sod", "standalone own damage"]):
-            rule_data["policy_type"] = "Standalone Own Damage"
-        elif any(kw in row_text_lower for kw in ["satp", "third party", "tp only", "act only", "tp policy", "tp cases"]):
-            rule_data["policy_type"] = "Third Party"
-        elif any(kw in row_text_lower for kw in ["package", "comprehensive", "p & l", "pkg"]):
-            rule_data["policy_type"] = "Comprehensive"
+        # 6. Policy Type / Plan Type Normalization & Inference
+        p_type = rule_data.get("policy_type")
+        if p_type:
+            p_type_lower = str(p_type).lower()
+            if any(kw in p_type_lower for kw in ["saod", "standalone od", "sod", "standalone own damage"]):
+                rule_data["policy_type"] = "Standalone Own Damage"
+            elif any(kw in p_type_lower for kw in ["satp", "third party", "tp only", "act only", "tp policy", "tp cases", "stp"]):
+                rule_data["policy_type"] = "Third Party"
+            elif any(kw in p_type_lower for kw in ["package", "comprehensive", "p & l", "pkg"]):
+                rule_data["policy_type"] = "Comprehensive"
+        else:
+            if any(kw in row_text_lower for kw in ["saod", "standalone od", "sod", "standalone own damage"]):
+                rule_data["policy_type"] = "Standalone Own Damage"
+            elif any(kw in row_text_lower for kw in ["satp", "third party", "tp only", "act only", "tp policy", "tp cases"]):
+                rule_data["policy_type"] = "Third Party"
+            elif any(kw in row_text_lower for kw in ["package", "comprehensive", "p & l", "pkg"]):
+                rule_data["policy_type"] = "Comprehensive"
 
     def parse_workbook(self, file_bytes: bytes, filename: str = None) -> List[Dict[str, Any]]:
         wb = openpyxl.load_workbook(BytesIO(file_bytes), read_only=False, data_only=True)
