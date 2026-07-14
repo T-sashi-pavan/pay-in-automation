@@ -158,6 +158,50 @@ def is_rule_effectively_empty(rule: Dict[str, Any]) -> bool:
     return True
 
 
+def check_duplicate_slab_ranges(slabs: List[Dict[str, Any]]) -> List[str]:
+    """
+    Real slab tiers must each cover a distinct (slab_from, slab_to) range
+    PER premium_type (OD/TP/NET) — two tiers sharing an identical range AND
+    the same premium_type is a parsing failure (e.g. a boundary never got
+    captured and both tiers fell back to the same value), not a legitimate
+    business case. premium_type is part of the key because one discount tier
+    legitimately produces two rows sharing a boundary — one OD, one TP — which
+    is not a duplicate.
+
+    A null/null boundary gets its own check: the display layer (rule_serializer's
+    _serialize_slab) paints every unresolved (None, None) tier with the same
+    1/500000 placeholder, so two or more null-boundary tiers in one rule LOOK
+    like duplicates to anyone viewing them even though they're distinct "unknown"
+    values underneath — flag that case too rather than only exact value matches.
+
+    Returns human-readable warnings for each real issue found, to surface via
+    the existing validation_status/warnings mechanism instead of silently
+    accepting the invalid data.
+    """
+    warnings: List[str] = []
+    seen: Dict[Tuple[Any, Any, Any], int] = {}
+    null_boundary_count = 0
+    for slab in slabs:
+        if slab.get("slab_from") is None and slab.get("slab_to") is None:
+            null_boundary_count += 1
+            continue
+        key = (slab.get("slab_from"), slab.get("slab_to"), slab.get("premium_type"))
+        seen[key] = seen.get(key, 0) + 1
+
+    if null_boundary_count > 1:
+        warnings.append(
+            f"{null_boundary_count} slab tier(s) have an unresolved boundary — they will display with an "
+            f"identical placeholder range until the source data/extraction is fixed"
+        )
+
+    for (slab_from, slab_to, premium_type), count in seen.items():
+        if count > 1:
+            warnings.append(
+                f"Duplicate slab range detected ({slab_from}–{slab_to}, {premium_type} appears {count} times) — possible extraction error"
+            )
+    return warnings
+
+
 def parse_tiered_rate_text(text: Any) -> Optional[List[Tuple[Optional[int], Optional[int], float]]]:
     """
     Detects vehicle-age-tiered text packed into a single pivot cell, e.g.
@@ -441,6 +485,78 @@ class ExcelParserService:
                 })
         return classifications
 
+    def _infer_fields_from_text(self, rule_data: Dict[str, Any], raw_json: Dict[str, Any]):
+        # Combine all non-empty cell values from the row to construct the context
+        text_parts = []
+        for k, v in raw_json.items():
+            if v is not None and str(v).strip() != "":
+                text_parts.append(str(v).strip())
+        
+        # Also append sheet name, product, subclass, and remarks to have full context
+        text_parts.append(rule_data.get("sheet_name") or "")
+        text_parts.append(rule_data.get("product") or "")
+        text_parts.append(rule_data.get("sub_class") or "")
+        text_parts.append(rule_data.get("remarks") or "")
+        
+        row_text = " | ".join(text_parts)
+        row_text_lower = row_text.lower()
+
+        # 1. NCB Status
+        if any(kw in row_text_lower for kw in ["without ncb", "no ncb", "ncb exclusion", "ncb excl"]):
+            rule_data["ncb_status"] = "No"
+        elif any(kw in row_text_lower for kw in ["ncb cases", "ncb only", "ncb >", "ncb >=", "ncb percent", "ncb ="]):
+            rule_data["ncb_status"] = "Yes"
+        elif "ncb" in row_text_lower:
+            rule_data["ncb_status"] = "Yes"
+
+        # 2. CPA Status
+        if any(kw in row_text_lower for kw in ["without cpa", "no cpa", "excluding cpa", "cpa excluded"]):
+            rule_data["cpa_status"] = "No"
+        elif any(kw in row_text_lower for kw in ["cpa cases", "cpa only", "cpa cover", "cpa included", "cpa yes", "cpa y/n", "cpa y"]):
+            rule_data["cpa_status"] = "Yes"
+
+        # 3. Fuel Type
+        if "petrol" in row_text_lower:
+            rule_data["fuel_type"] = "PETROL"
+        elif "diesel" in row_text_lower:
+            rule_data["fuel_type"] = "DIESEL"
+        elif "cng" in row_text_lower:
+            rule_data["fuel_type"] = "CNG"
+        elif any(kw in row_text_lower for kw in ["electric", "ev", "e-rickshaw", "e-cart"]):
+            rule_data["fuel_type"] = "ELECTRIC"
+
+        # 4. Make
+        if "except new mahindra" in row_text_lower:
+            rule_data["make"] = "EXCEPT NEW MAHINDRA"
+        elif "mahindra only" in row_text_lower:
+            rule_data["make"] = "MAHINDRA"
+        elif "except tata" in row_text_lower:
+            rule_data["make"] = "EXCEPT TATA"
+        elif "hyundai & maruti" in row_text_lower or "hyundai and maruti" in row_text_lower:
+            rule_data["make"] = "HYUNDAI, MARUTI"
+        elif "hyundai" in row_text_lower:
+            rule_data["make"] = "HYUNDAI"
+        elif "maruti" in row_text_lower:
+            rule_data["make"] = "MARUTI"
+        elif "honda" in row_text_lower:
+            rule_data["make"] = "HONDA"
+        elif "bajaj" in row_text_lower:
+            rule_data["make"] = "BAJAJ"
+
+        # 5. Model
+        for model_name in ["nexon", "swift", "alto 800", "alto", "ace", "super ace", "yodha", "xenon", "magic", "intra", "super carry", "jeeto", "supro"]:
+            if model_name in row_text_lower:
+                rule_data["model"] = model_name.upper()
+                break
+
+        # 6. Policy Type / Plan Type
+        if any(kw in row_text_lower for kw in ["saod", "standalone od", "sod", "standalone own damage"]):
+            rule_data["policy_type"] = "Standalone Own Damage"
+        elif any(kw in row_text_lower for kw in ["satp", "third party", "tp only", "act only", "tp policy", "tp cases"]):
+            rule_data["policy_type"] = "Third Party"
+        elif any(kw in row_text_lower for kw in ["package", "comprehensive", "p & l", "pkg"]):
+            rule_data["policy_type"] = "Comprehensive"
+
     def parse_workbook(self, file_bytes: bytes, filename: str = None) -> List[Dict[str, Any]]:
         wb = openpyxl.load_workbook(BytesIO(file_bytes), read_only=False, data_only=True)
         sheet_names = wb.sheetnames
@@ -614,7 +730,8 @@ class ExcelParserService:
                 for field in ("lob", "file_type", "insurance_company", "product", "policy_type", 
                               "plan_type", "sub_product", "class_", "sub_class", "make", "model", 
                               "fuel_type", "body_type", "cpa_status", "ncb_status", "partner_type", 
-                              "zone", "source", "rto", "remarks", "state", "vehicle_age", "effective_date"):
+                              "zone", "source", "rto", "remarks", "state", "vehicle_age", "effective_date",
+                              "vehicle_age_from", "vehicle_age_to"):
                     param_vals[field] = None
 
                 for p in params:
@@ -662,8 +779,20 @@ class ExcelParserService:
                     base_rule["vehicle_age_from"] = age_from
                     base_rule["vehicle_age_to"] = age_to
                 else:
-                    base_rule["vehicle_age_from"] = None
-                    base_rule["vehicle_age_to"] = None
+                    age_from_val = param_vals.get("vehicle_age_from")
+                    age_to_val = param_vals.get("vehicle_age_to")
+                    if age_from_val is not None or age_to_val is not None:
+                        try:
+                            base_rule["vehicle_age_from"] = int(float(age_from_val)) if age_from_val is not None else 1
+                        except ValueError:
+                            base_rule["vehicle_age_from"] = 1
+                        try:
+                            base_rule["vehicle_age_to"] = int(float(age_to_val)) if age_to_val is not None else 50
+                        except ValueError:
+                            base_rule["vehicle_age_to"] = 50
+                    else:
+                        base_rule["vehicle_age_from"] = None
+                        base_rule["vehicle_age_to"] = None
                     
                 # 3. Effective date (Auto-corrected to today's date if missing)
                 date_val = param_vals.get("effective_date")
@@ -686,7 +815,19 @@ class ExcelParserService:
                     val = self._get_scalar_value(row, r["header"])
                     flat_rates[r["field"]] = val
                     raw_json[r["header"]] = val
-                
+
+                # Capture UNKNOWN column text too — a column with no recognized
+                # synonym (a free-text "Remarks"/"Condition"/notes column, e.g.
+                # "NCB Cases", "Except New Mahindra", "HR 68 Excluded") previously
+                # never reached raw_json at all, so downstream inference (Groq
+                # enrichment) had nothing to read for exactly the descriptive text
+                # it needs. This is purely additive — doesn't change classification
+                # or any existing field mapping.
+                for u in [c for c in classifications if c["type"] == "UNKNOWN"]:
+                    val = self._get_scalar_value(row, u["header"])
+                    if val is not None and str(val).strip() != "":
+                        raw_json[u["header"]] = val
+
                 if is_pivot:
                     # For pivot tables, each location column is a rate entry
                     for loc in locations:
@@ -714,6 +855,9 @@ class ExcelParserService:
                         if not rule_data["policy_type"]:
                             rule_data["policy_type"] = "Comprehensive" if rate_field == "payin_od" else "Third Party"
                             
+                        # Run text based field inference to scan remarks, headers, and column strings
+                        self._infer_fields_from_text(rule_data, raw_json)
+
                         # Detect vehicle-age-tiered text packed into this single cell
                         # (e.g. Go Digit's "Age 0: 60%/85%\nAge >=1: 85%"). A cell with
                         # >=2 distinct age bands and differing rates is a genuine slab
@@ -793,6 +937,9 @@ class ExcelParserService:
                     rule_data = base_rule.copy()
                     rule_data["sheet_name"] = sheet_name
                     
+                    # Run text based field inference to scan remarks, headers, and column strings
+                    self._infer_fields_from_text(rule_data, raw_json)
+
                     # Slabs extraction from row rates
                     payin_od = self.normalizer.normalize_percentage(flat_rates.get("payin_od")) if flat_rates.get("payin_od") is not None else None
                     payout_od = self.normalizer.normalize_percentage(flat_rates.get("payout_od")) if flat_rates.get("payout_od") is not None else None
@@ -993,7 +1140,11 @@ class ExcelParserService:
                         merged_slabs.append(slab_obj)
                 
                 base_rule["slabs"] = merged_slabs
-                
+                dup_warnings = check_duplicate_slab_ranges(merged_slabs)
+                if dup_warnings:
+                    base_rule["warnings"] = list(base_rule.get("warnings") or []) + dup_warnings
+                    base_rule["validation_status"] = "WARNING"
+
                 base_rule["payin_od"] = None
                 base_rule["payout_od"] = None
                 base_rule["payin_tp"] = None

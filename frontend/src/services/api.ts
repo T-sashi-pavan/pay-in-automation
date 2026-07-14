@@ -81,18 +81,6 @@ export const api = {
     return response.data;
   },
 
-  /** Export all matching search results as JSON file (downloaded in browser) */
-  exportAsJSON: (records: any[], filename = 'commission_rules_export') => {
-    const jsonStr = JSON.stringify(records, null, 2);
-    const blob = new Blob([jsonStr], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${filename}.json`;
-    link.click();
-    URL.revokeObjectURL(url);
-  },
-
   /** PATCH a single field on a commission rule. Returns the updated rule (same shape as the GET/search endpoints). */
   updateCommissionRuleField: async (
     id: number,
@@ -151,37 +139,21 @@ export const api = {
     return response.data;
   },
 
-  /** Export all matching search results as CSV file (downloaded in browser) */
-  exportAsCSV: (records: any[], filename = 'commission_rules_export') => {
-    if (!records.length) return;
-    const flatRecords = records.map((r) => {
-      const { slabs, warnings, raw_json, ...rest } = r;
-      return {
-        ...rest,
-        slab_count: slabs?.length ?? 0,
-        has_warnings: (warnings?.length ?? 0) > 0,
-      };
+  /**
+   * Builds the download URL for GET /uploads/{id}/export — a real, server-generated
+   * two-sheet .xlsx (Non-Slab, Slab-with-nested-tiers) covering the FULL filtered
+   * result set, not just the current page. Replaces the old client-side CSV/JSON
+   * export, which was capped at 50 rows and discarded slab tier detail entirely.
+   * Params use the same keys as getExtractedRecords's filters.
+   */
+  getExportUrl: (id: number, params: Record<string, any> = {}): string => {
+    const query = new URLSearchParams();
+    Object.entries(params).forEach(([key, val]) => {
+      if (val !== undefined && val !== null && val !== '') {
+        query.set(key, String(val));
+      }
     });
-    const headers = Object.keys(flatRecords[0]);
-    const csvRows = [
-      headers.join(','),
-      ...flatRecords.map((row) =>
-        headers.map((h) => {
-          const val = row[h];
-          if (val === null || val === undefined) return '';
-          const str = String(val).replace(/"/g, '""');
-          return str.includes(',') || str.includes('"') || str.includes('\n')
-            ? `"${str}"`
-            : str;
-        }).join(',')
-      ),
-    ];
-    const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${filename}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
+    const qs = query.toString();
+    return `${API_BASE_URL}/uploads/${id}/export${qs ? `?${qs}` : ''}`;
   },
 };

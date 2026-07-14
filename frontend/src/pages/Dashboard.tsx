@@ -28,7 +28,6 @@ import {
   ChevronDown,
   ChevronLeft,
   RefreshCw,
-  FileJson,
   History,
   Maximize2,
   Minimize2,
@@ -130,13 +129,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  // Columns/Export are now accordion sections inside the single "More
-  // Options" dropdown, rather than two separate floating dropdowns.
+  // Columns is an accordion section inside the single "More Options"
+  // dropdown; Export is now a single direct action (one real .xlsx download).
   const [isColsOpen, setIsColsOpen] = useState(false);
-  const [isExportOpen, setIsExportOpen] = useState(false);
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   const moreRef = useRef<HTMLDivElement>(null);
-  const closeMore = () => { setIsMoreOpen(false); setIsColsOpen(false); setIsExportOpen(false); };
+  const closeMore = () => { setIsMoreOpen(false); setIsColsOpen(false); };
 
   // Upload Grid — permanent toolbar trigger (file input lives here now, not in HistoryDrawer)
   const uploadInputRef = useRef<HTMLInputElement>(null);
@@ -227,12 +225,20 @@ export const Dashboard: React.FC<DashboardProps> = ({
     .filter(([key, val]) => val && key !== 'search' && key !== 'commission_type')
     .length;
 
-  const handleExportCSV = () => {
-    api.exportAsCSV(records, `Rules_${company || 'Export'}`);
-  };
-
-  const handleExportJSON = () => {
-    api.exportAsJSON(records, `Rules_${company || 'Export'}`);
+  const handleExportExcel = () => {
+    if (!selectedUploadId) return;
+    // Same filter-key mapping App.tsx uses when calling getExtractedRecords,
+    // so "export" always matches what's currently on screen.
+    const exportParams: Record<string, any> = {};
+    Object.entries(filters).forEach(([key, val]) => {
+      if (!val) return;
+      if (key === 'company') exportParams['company'] = val;
+      else if (key === 'status' || key === 'validation_status') exportParams['validation_status'] = val;
+      else if (key === 'hasSlabs') exportParams['has_slabs'] = val;
+      else if (key === 'vehicleAge') exportParams['vehicle_age'] = val;
+      else exportParams[key] = val;
+    });
+    window.location.href = api.getExportUrl(selectedUploadId, exportParams);
   };
 
   const getOpts = (key: string): FilterOption[] => {
@@ -529,34 +535,16 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
                 <div className="h-px bg-[#E5E7EB] dark:bg-slate-800 my-1" />
 
-                {/* Export (expands in place) */}
+                {/* Export — a single real .xlsx download (Non-Slab + Slab sheets,
+                    full filtered result set), generated server-side. */}
                 <button
                   type="button"
-                  onClick={() => setIsExportOpen(prev => !prev)}
+                  onClick={() => { handleExportExcel(); closeMore(); }}
                   disabled={records.length === 0}
-                  className="flex items-center justify-between gap-2.5 px-3 py-2.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer"
+                  className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer"
                 >
-                  <span className="flex items-center gap-2.5"><Download className="w-4 h-4" /> Export</span>
-                  <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-150 ${isExportOpen ? 'rotate-180' : ''}`} />
+                  <Download className="w-4 h-4" /> Download Excel (.xlsx)
                 </button>
-                {isExportOpen && (
-                  <div className="pl-3 pr-1 py-1 flex flex-col gap-1">
-                    <button
-                      type="button"
-                      onClick={() => { handleExportCSV(); closeMore(); }}
-                      className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer"
-                    >
-                      <Download className="w-3.5 h-3.5" /> CSV
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { handleExportJSON(); closeMore(); }}
-                      className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer"
-                    >
-                      <FileJson className="w-3.5 h-3.5" /> JSON
-                    </button>
-                  </div>
-                )}
               </div>
             )}
           </div>

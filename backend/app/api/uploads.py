@@ -2,7 +2,9 @@ import os
 import shutil
 import uuid
 import logging
+from urllib.parse import quote
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query, BackgroundTasks
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import desc, or_, and_, insert
 from typing import List, Optional, Dict, Any
@@ -15,6 +17,7 @@ from backend.app.services.excel_parser.parser import ExcelParserService
 from backend.app.services.docx_parser.parser import DocxParserService
 from backend.app.services.pdf_parser.parser import PdfParserService
 from backend.app.services.rule_serializer import serialize_commission_rule
+from backend.app.services.excel_export import build_export_workbook
 
 router = APIRouter(prefix="/api")
 logger = logging.getLogger(__name__)
@@ -96,7 +99,7 @@ async def upload_excel(
             if rule.get("insurance_company"):
                 detected_company = rule["insurance_company"]
                 break
-        
+
         upload_history.company = detected_company
 
         # Save rules and slabs in optimized chunks
@@ -249,49 +252,48 @@ def get_uploads(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail="Failed to retrieve upload history.")
 
 
-@router.get("/uploads/{upload_id}")
-def get_extracted_records(
-    upload_id: int,
-    page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1),
-    search: Optional[str] = Query(None),
-    lob: Optional[str] = Query(None),
-    file_type: Optional[str] = Query(None),
-    company: Optional[str] = Query(None),
-    product: Optional[str] = Query(None),
-    policy_type: Optional[str] = Query(None),
-    plan_type: Optional[str] = Query(None),
-    sub_product: Optional[str] = Query(None),
-    class_name: Optional[str] = Query(None, alias="class"),
-    sub_class: Optional[str] = Query(None),
-    make: Optional[str] = Query(None),
-    model: Optional[str] = Query(None),
-    fuel_type: Optional[str] = Query(None),
-    body_type: Optional[str] = Query(None),
-    cpa_status: Optional[str] = Query(None),
-    ncb_status: Optional[str] = Query(None),
-    partner_type: Optional[str] = Query(None),
-    state: Optional[str] = Query(None),
-    zone: Optional[str] = Query(None),
-    source: Optional[str] = Query(None),
-    rto: Optional[str] = Query(None),
-    validation_status: Optional[str] = Query(None),
-    commission_type: Optional[str] = Query(None),
-    has_slabs: Optional[str] = Query(None),
-    vehicle_age: Optional[str] = Query(None),
-    db: Session = Depends(get_db)
+def _apply_rule_filters(
+    query, db: Session, *,
+    search: Optional[str] = None,
+    lob: Optional[str] = None,
+    file_type: Optional[str] = None,
+    company: Optional[str] = None,
+    product: Optional[str] = None,
+    policy_type: Optional[str] = None,
+    plan_type: Optional[str] = None,
+    sub_product: Optional[str] = None,
+    class_name: Optional[str] = None,
+    sub_class: Optional[str] = None,
+    make: Optional[str] = None,
+    model: Optional[str] = None,
+    fuel_type: Optional[str] = None,
+    body_type: Optional[str] = None,
+    cpa_status: Optional[str] = None,
+    ncb_status: Optional[str] = None,
+    partner_type: Optional[str] = None,
+    state: Optional[str] = None,
+    zone: Optional[str] = None,
+    source: Optional[str] = None,
+    rto: Optional[str] = None,
+    validation_status: Optional[str] = None,
+    commission_type: Optional[str] = None,
+    has_slabs: Optional[str] = None,
+    vehicle_age: Optional[str] = None,
 ):
     """
-    Returns the parsed commission rules and associated slabs for an upload, 
-    with pagination, filter parameters, and search query.
+    Shared filter-application logic for CommissionRule queries — used by both
+    GET /uploads/{id} (paginated JSON) and GET /uploads/{id}/export (full
+    unpaginated .xlsx), so the two never drift out of sync on what "current
+    filters" means.
     """
-    upload = db.query(UploadHistory).filter(UploadHistory.id == upload_id).first()
-    if not upload:
-        raise HTTPException(status_code=404, detail="Upload record not found.")
-
-    query = db.query(CommissionRule).options(joinedload(CommissionRule.slabs)).filter(CommissionRule.upload_id == upload_id)
-
-    # Dynamic dynamic filters helper map (excluding list/special values state, rto, vehicle_age, has_slabs, commission_type)
+    local_values = {
+        "lob": lob, "file_type": file_type, "insurance_company": company, "product": product,
+        "policy_type": policy_type, "plan_type": plan_type, "sub_product": sub_product,
+        "class_": class_name, "sub_class": sub_class, "make": make, "model": model,
+        "fuel_type": fuel_type, "body_type": body_type, "cpa_status": cpa_status,
+        "ncb_status": ncb_status, "partner_type": partner_type, "zone": zone, "source": source,
+        "validation_status": validation_status,
+    }
     filter_map = {
         "lob": CommissionRule.lob,
         "file_type": CommissionRule.file_type,
@@ -315,14 +317,7 @@ def get_extracted_records(
     }
 
     for param_name, db_field in filter_map.items():
-        val = None
-        if param_name == "insurance_company":
-            val = company
-        elif param_name == "class_":
-            val = class_name
-        else:
-            val = locals().get(param_name)
-            
+        val = local_values.get(param_name)
         if val:
             vals = [v.strip() for v in val.split(",") if v.strip()]
             if vals:
@@ -336,7 +331,7 @@ def get_extracted_records(
         state_vals = [v.strip() for v in state.split(",") if v.strip()]
         if state_vals:
             query = query.filter(or_(*[CommissionRule.state.ilike(f"%{v}%") for v in state_vals]))
-            
+
     if rto:
         rto_vals = [v.strip() for v in rto.split(",") if v.strip()]
         if rto_vals:
@@ -388,9 +383,62 @@ def get_extracted_records(
         )
         query = query.filter(search_filter)
 
+    return query
+
+
+@router.get("/uploads/{upload_id}")
+def get_extracted_records(
+    upload_id: int,
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1),
+    search: Optional[str] = Query(None),
+    lob: Optional[str] = Query(None),
+    file_type: Optional[str] = Query(None),
+    company: Optional[str] = Query(None),
+    product: Optional[str] = Query(None),
+    policy_type: Optional[str] = Query(None),
+    plan_type: Optional[str] = Query(None),
+    sub_product: Optional[str] = Query(None),
+    class_name: Optional[str] = Query(None, alias="class"),
+    sub_class: Optional[str] = Query(None),
+    make: Optional[str] = Query(None),
+    model: Optional[str] = Query(None),
+    fuel_type: Optional[str] = Query(None),
+    body_type: Optional[str] = Query(None),
+    cpa_status: Optional[str] = Query(None),
+    ncb_status: Optional[str] = Query(None),
+    partner_type: Optional[str] = Query(None),
+    state: Optional[str] = Query(None),
+    zone: Optional[str] = Query(None),
+    source: Optional[str] = Query(None),
+    rto: Optional[str] = Query(None),
+    validation_status: Optional[str] = Query(None),
+    commission_type: Optional[str] = Query(None),
+    has_slabs: Optional[str] = Query(None),
+    vehicle_age: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Returns the parsed commission rules and associated slabs for an upload,
+    with pagination, filter parameters, and search query.
+    """
+    upload = db.query(UploadHistory).filter(UploadHistory.id == upload_id).first()
+    if not upload:
+        raise HTTPException(status_code=404, detail="Upload record not found.")
+
+    query = db.query(CommissionRule).options(joinedload(CommissionRule.slabs)).filter(CommissionRule.upload_id == upload_id)
+    query = _apply_rule_filters(
+        query, db, search=search, lob=lob, file_type=file_type, company=company, product=product,
+        policy_type=policy_type, plan_type=plan_type, sub_product=sub_product, class_name=class_name,
+        sub_class=sub_class, make=make, model=model, fuel_type=fuel_type, body_type=body_type,
+        cpa_status=cpa_status, ncb_status=ncb_status, partner_type=partner_type, state=state,
+        zone=zone, source=source, rto=rto, validation_status=validation_status,
+        commission_type=commission_type, has_slabs=has_slabs, vehicle_age=vehicle_age,
+    )
+
     # Perform counts for pagination metadata
     total_items = query.count()
-    
+
     # Retrieve items
     offset = (page - 1) * limit
     rules = query.offset(offset).limit(limit).all()
@@ -409,6 +457,73 @@ def get_extracted_records(
         },
         "records": records
     }
+
+
+@router.get("/uploads/{upload_id}/export")
+def export_extracted_records(
+    upload_id: int,
+    search: Optional[str] = Query(None),
+    lob: Optional[str] = Query(None),
+    file_type: Optional[str] = Query(None),
+    company: Optional[str] = Query(None),
+    product: Optional[str] = Query(None),
+    policy_type: Optional[str] = Query(None),
+    plan_type: Optional[str] = Query(None),
+    sub_product: Optional[str] = Query(None),
+    class_name: Optional[str] = Query(None, alias="class"),
+    sub_class: Optional[str] = Query(None),
+    make: Optional[str] = Query(None),
+    model: Optional[str] = Query(None),
+    fuel_type: Optional[str] = Query(None),
+    body_type: Optional[str] = Query(None),
+    cpa_status: Optional[str] = Query(None),
+    ncb_status: Optional[str] = Query(None),
+    partner_type: Optional[str] = Query(None),
+    state: Optional[str] = Query(None),
+    zone: Optional[str] = Query(None),
+    source: Optional[str] = Query(None),
+    rto: Optional[str] = Query(None),
+    validation_status: Optional[str] = Query(None),
+    commission_type: Optional[str] = Query(None),
+    has_slabs: Optional[str] = Query(None),
+    vehicle_age: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Downloads the FULL filtered result set (no pagination) for an upload as a
+    two-sheet .xlsx (Non-Slab, Slab-with-nested-tiers) — replaces the old
+    client-side CSV/JSON export, which was capped at the current page and
+    discarded slab tier detail entirely. Uses the exact same filters as
+    GET /uploads/{id} via the shared `_apply_rule_filters` helper.
+    """
+    upload = db.query(UploadHistory).filter(UploadHistory.id == upload_id).first()
+    if not upload:
+        raise HTTPException(status_code=404, detail="Upload record not found.")
+
+    query = db.query(CommissionRule).options(joinedload(CommissionRule.slabs)).filter(CommissionRule.upload_id == upload_id)
+    query = _apply_rule_filters(
+        query, db, search=search, lob=lob, file_type=file_type, company=company, product=product,
+        policy_type=policy_type, plan_type=plan_type, sub_product=sub_product, class_name=class_name,
+        sub_class=sub_class, make=make, model=model, fuel_type=fuel_type, body_type=body_type,
+        cpa_status=cpa_status, ncb_status=ncb_status, partner_type=partner_type, state=state,
+        zone=zone, source=source, rto=rto, validation_status=validation_status,
+        commission_type=commission_type, has_slabs=has_slabs, vehicle_age=vehicle_age,
+    )
+    rules = query.all()
+
+    try:
+        buffer = build_export_workbook(rules, db)
+    except Exception as e:
+        logger.error(f"Failed to build export workbook for upload {upload_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to generate the Excel export.")
+
+    safe_name = "".join(c for c in (upload.filename or "export") if c.isalnum() or c in " ._-").strip() or "export"
+    filename = f"CRM_Export_{safe_name}.xlsx"
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+    )
 
 
 @router.delete("/uploads/{upload_id}")

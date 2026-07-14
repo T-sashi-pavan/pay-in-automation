@@ -20,6 +20,8 @@ export interface SlabDetail {
   payout_tp: number | null;
   payin_net: number | null;
   payout_net: number | null;
+  /** Field keys (matching this object's own keys) that came back null and got a business default — not real extracted values. */
+  _defaulted_fields?: string[];
 }
 
 export interface CommissionRule {
@@ -70,6 +72,8 @@ export interface CommissionRule {
   payin_scheme: number | null;
   payout_scheme: number | null;
   slabs: SlabDetail[];
+  /** Field keys (matching this object's own keys) that came back null and got a business default — not real extracted values. */
+  _defaulted_fields?: string[];
 }
 
 export interface PaginationMetadata {

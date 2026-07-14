@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../services/api';
 import { ExpandedRuleDetails } from '../components/ExpandedRuleDetails';
@@ -22,15 +22,12 @@ import {
   Search,
   Filter,
   ChevronRight,
-  ChevronDown,
   ChevronLeft,
   RefreshCw,
   Calendar,
   Maximize2,
   Minimize2,
   X,
-  Download,
-  FileJson,
   FileSpreadsheet,
   ArrowUpDown,
   ArrowUp,
@@ -103,8 +100,6 @@ export const CustomiseData: React.FC = () => {
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [sorting, setSorting] = useState<SortingState>([]);
-  const [isExportOpen, setIsExportOpen] = useState(false);
-  const exportRef = useRef<HTMLDivElement>(null);
 
   // Exit fullscreen on Escape
   useEffect(() => {
@@ -112,15 +107,6 @@ export const CustomiseData: React.FC = () => {
     document.addEventListener('keydown', h);
     return () => document.removeEventListener('keydown', h);
   }, [isFullscreen]);
-
-  // Close export dropdown on outside click
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (exportRef.current && !exportRef.current.contains(e.target as Node)) setIsExportOpen(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
 
   // Fetch distinct filter options
   const { data: filterOptions = {}, isLoading: isFiltersLoading } = useQuery<FilterOptionsMap>({
@@ -380,37 +366,10 @@ export const CustomiseData: React.FC = () => {
               {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
             </button>
 
-            {/* Export dropdown */}
-            <div className="relative" ref={exportRef}>
-              <button
-                type="button"
-                onClick={() => setIsExportOpen(prev => !prev)}
-                disabled={records.length === 0}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#E5E7EB] dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-xs font-semibold transition-colors duration-150 cursor-pointer"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Export</span>
-                <ChevronDown className="w-3 h-3" />
-              </button>
-              {isExportOpen && (
-                <div className="absolute right-0 top-full mt-1.5 w-44 bg-white dark:bg-slate-900 border border-[#E5E7EB] dark:border-slate-700 rounded-xl shadow-lg z-20 p-1.5 flex flex-col gap-0.5">
-                  <button
-                    type="button"
-                    onClick={() => { api.exportAsCSV(records, 'Commission_Rules'); setIsExportOpen(false); }}
-                    className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer"
-                  >
-                    <Download className="w-3.5 h-3.5" /> CSV
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { api.exportAsJSON(records, 'Commission_Rules'); setIsExportOpen(false); }}
-                    className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer"
-                  >
-                    <FileJson className="w-3.5 h-3.5" /> JSON
-                  </button>
-                </div>
-              )}
-            </div>
+            {/* Export removed: this page's results span multiple uploads
+                (cross-file search), which doesn't map to the single-upload
+                GET /uploads/{id}/export endpoint used on the Upload Files
+                page. This page's nav entry is currently hidden anyway. */}
           </div>
         </div>
 

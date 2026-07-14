@@ -7,7 +7,7 @@ from datetime import date
 from typing import List, Dict, Any, Optional, Tuple
 import pdfplumber
 
-from backend.app.services.excel_parser.parser import ExcelParserService, is_rule_effectively_empty
+from backend.app.services.excel_parser.parser import ExcelParserService, is_rule_effectively_empty, check_duplicate_slab_ranges
 from backend.app.services.normalizer.normalizer import ValueNormalizer
 from backend.app.services.validator.validator import RuleValidator
 
@@ -54,9 +54,13 @@ if pytesseract is not None and shutil.which("tesseract") is None:
             pytesseract.pytesseract.tesseract_cmd = _candidate
             break
 
-ANTHROPIC_VISION_MODEL = "claude-sonnet-5"
-GEMINI_VISION_MODEL = "gemini-2.5-pro"
-OPENAI_VISION_MODEL = os.getenv("OPENAI_VISION_MODEL", "gpt-4o")
+# Default to the cheap/fast tier for every provider — vision-based table
+# extraction is a well-structured task these smaller models handle well, and
+# a shared/company API key shouldn't default to the most expensive option.
+# Override via env var to force a bigger model for a specific deployment.
+ANTHROPIC_VISION_MODEL = os.getenv("ANTHROPIC_VISION_MODEL", "claude-haiku-4-5-20251001")
+GEMINI_VISION_MODEL = os.getenv("GEMINI_VISION_MODEL", "gemini-2.5-flash")
+OPENAI_VISION_MODEL = os.getenv("OPENAI_VISION_MODEL", "gpt-4o-mini")
 
 # Cost-safety net: a company API key can be drained by an unexpectedly huge
 # scanned document. Caps how many pages per upload get sent to a paid vision
@@ -84,8 +88,11 @@ For each row, record the following fields:
 - note: any other qualifying condition printed for this row (vehicle age, brand-new-only, etc.), or null.
 - is_slab: true only if the "Maximum Commission" cell contains MULTIPLE discount-percentage-based tiers \
 (e.g. "a) Discount upto 40%: 30% OD+90% TP; b) Discount 40-70%: 25% OD+85% TP; c) Discount >70%: 20% OD+80% TP").
-  - If true, fill "tiers": a list of {discount_from_pct, discount_to_pct, commission_od_pct, commission_tp_pct}. \
-Use null for discount_to_pct on the final open-ended tier (e.g. "exceeding 70%").
+  - If true, fill "tiers": a list of {discount_from_pct, discount_to_pct, commission_od_pct, commission_tp_pct, \
+commission_net_pct}. Use null for discount_to_pct on the final open-ended tier (e.g. "exceeding 70%"). Each tier \
+should fill EITHER commission_od_pct/commission_tp_pct (when OD and TP get different rates) OR \
+commission_net_pct alone (when the tier states one flat rate "on Net Premium (OD+TP)") — never guess an OD/TP \
+split for a rate that was only ever stated as a single Net figure.
   - If false, fill commission_od_pct / commission_tp_pct / commission_net_pct with whichever rate(s) actually \
 apply (e.g. "50% on Net Premium (OD+TP)" means both OD and TP get 50% via commission_net_pct=50; \
 "2.5% on TP premium" means only commission_tp_pct=2.5).
@@ -124,6 +131,7 @@ EXTRACTION_TOOL_SCHEMA = {
                                     "discount_to_pct": {"type": ["number", "null"]},
                                     "commission_od_pct": {"type": ["number", "null"]},
                                     "commission_tp_pct": {"type": ["number", "null"]},
+                                    "commission_net_pct": {"type": ["number", "null"]},
                                 },
                                 "required": ["discount_from_pct", "discount_to_pct"],
                             },
@@ -145,6 +153,7 @@ if genai_types is not None:
             "discount_to_pct": genai_types.Schema(type=genai_types.Type.NUMBER, nullable=True),
             "commission_od_pct": genai_types.Schema(type=genai_types.Type.NUMBER, nullable=True),
             "commission_tp_pct": genai_types.Schema(type=genai_types.Type.NUMBER, nullable=True),
+            "commission_net_pct": genai_types.Schema(type=genai_types.Type.NUMBER, nullable=True),
         },
     )
     _GEMINI_ROW_SCHEMA = genai_types.Schema(
@@ -182,8 +191,9 @@ _OPENAI_TIER_SCHEMA = {
         "discount_to_pct": {"type": ["number", "null"]},
         "commission_od_pct": {"type": ["number", "null"]},
         "commission_tp_pct": {"type": ["number", "null"]},
+        "commission_net_pct": {"type": ["number", "null"]},
     },
-    "required": ["discount_from_pct", "discount_to_pct", "commission_od_pct", "commission_tp_pct"],
+    "required": ["discount_from_pct", "discount_to_pct", "commission_od_pct", "commission_tp_pct", "commission_net_pct"],
     "additionalProperties": False,
 }
 _OPENAI_ROW_SCHEMA = {
@@ -557,21 +567,11 @@ class PdfParserService:
             for f in ("payin_od", "payout_od", "payin_tp", "payout_tp", "payin_net", "payout_net",
                       "payin_reward", "payout_reward", "payin_scheme", "payout_scheme"):
                 rule_data[f] = None
-            rule_data["slabs"] = [
-                {
-                    "payin_type": "PERCENTAGE",
-                    "premium_type": "DISCOUNT %",
-                    "slab_from": t.get("discount_from_pct"),
-                    "slab_to": t.get("discount_to_pct"),
-                    "payin_od": t.get("commission_od_pct"),
-                    "payout_od": None,
-                    "payin_tp": t.get("commission_tp_pct"),
-                    "payout_tp": None,
-                    "payin_net": None,
-                    "payout_net": None,
-                }
-                for t in row["tiers"]
-            ]
+            rule_data["slabs"] = self._tiers_to_slabs(row["tiers"])
+            dup_warnings = check_duplicate_slab_ranges(rule_data["slabs"])
+            if dup_warnings:
+                rule_data["warnings"] = list(rule_data["warnings"]) + dup_warnings
+                rule_data["validation_status"] = "WARNING"
         else:
             rule_data["commission_type"] = "NON_SLAB"
             rule_data["slab_configuration"] = False
@@ -588,6 +588,60 @@ class PdfParserService:
             rule_data["slabs"] = []
 
         return rule_data
+
+    def _tiers_to_slabs(self, tiers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Converts LLM-extracted discount-percentage tiers into SlabDetail dicts,
+        matching the established one-rate-bucket-per-row convention used by every
+        real Excel-sourced slab (premium_type is always exactly one of OD/TP/NET,
+        never a combined or made-up label like "DISCOUNT %"). A tier stating both
+        an OD and a TP rate (e.g. "30% OD + 90% TP") becomes TWO slab rows sharing
+        the same slab_from/slab_to boundary, one per rate bucket.
+
+        Boundaries are also normalized to be non-overlapping: adjacent tiers whose
+        upper/lower bounds touch (e.g. (0,40),(40,70)) get the next tier's lower
+        bound bumped to upper+1, since discount bands in the source documents are
+        always whole-number percentages — this reads as a real duplicate/overlap
+        to anyone scanning the table otherwise, even though it's technically just
+        an exclusive-vs-inclusive boundary convention.
+        """
+        normalized = []
+        prev_to = None
+        for t in tiers:
+            frm = t.get("discount_from_pct")
+            to = t.get("discount_to_pct")
+            if prev_to is not None and frm is not None and frm == prev_to:
+                frm = frm + 1
+            normalized.append({**t, "discount_from_pct": frm, "discount_to_pct": to})
+            prev_to = to if to is not None else prev_to
+
+        slabs = []
+        for t in normalized:
+            slab_from = t.get("discount_from_pct")
+            slab_to = t.get("discount_to_pct")
+            rate_buckets = (
+                ("OD", "payin_od", t.get("commission_od_pct")),
+                ("TP", "payin_tp", t.get("commission_tp_pct")),
+                ("NET", "payin_net", t.get("commission_net_pct")),
+            )
+            for premium_type, payin_field, value in rate_buckets:
+                if value is None:
+                    continue
+                slab = {
+                    "payin_type": "PERCENTAGE",
+                    "premium_type": premium_type,
+                    "slab_from": slab_from,
+                    "slab_to": slab_to,
+                    "payin_od": None,
+                    "payout_od": None,
+                    "payin_tp": None,
+                    "payout_tp": None,
+                    "payin_net": None,
+                    "payout_net": None,
+                }
+                slab[payin_field] = value
+                slabs.append(slab)
+        return slabs
 
     def _ocr_page_table(self, file_bytes: bytes, page_idx: int) -> Optional[List[List[str]]]:
         """

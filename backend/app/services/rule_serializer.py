@@ -1,14 +1,25 @@
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from sqlalchemy.orm import Session
 
 from backend.app.models.commission_rule import CommissionRule
 from backend.app.services import master_data_service
-from backend.app.services.field_normalizer import default_or, derive_plan_type, compute_payout
+from backend.app.services.field_normalizer import default_or, derive_plan_type, compute_payout, clean
 
 
 def _serialize_slab(s) -> Dict[str, Any]:
     payin_od, payin_tp, payin_net = s.payin_od, s.payin_tp, s.payin_net
+
+    defaulted_fields: List[str] = []
+    if clean(s.payin_type) is None:
+        defaulted_fields.append("payin_type")
+    if clean(s.premium_type) is None:
+        defaulted_fields.append("premium_type")
+    if s.slab_from is None:
+        defaulted_fields.append("slab_from")
+    if s.slab_to is None:
+        defaulted_fields.append("slab_to")
+
     return {
         "id": s.id,
         "payin_type": default_or(s.payin_type, "NET"),
@@ -23,6 +34,7 @@ def _serialize_slab(s) -> Dict[str, Any]:
         "payout_tp": compute_payout(payin_tp),
         "payin_net": payin_net,
         "payout_net": compute_payout(payin_net),
+        "_defaulted_fields": defaulted_fields,
     }
 
 
@@ -43,9 +55,32 @@ def serialize_commission_rule(r: CommissionRule, db: Session) -> Dict[str, Any]:
 
     `state_label`/`product_label` remain best-effort *additions* alongside
     the (now-defaulted) raw fields, same as before.
+
+    `_defaulted_fields` lists every field key (matching this dict's own keys)
+    whose value came back null/blank from the parser and got a business
+    default here — i.e. "this cell is not a real extracted value." Consumers
+    (frontend cell rendering, the .xlsx export in excel_export.py) use this to
+    visually flag defaults instead of presenting them as indistinguishable
+    from genuinely-extracted data.
     """
     payin_od, payin_tp, payin_net = r.payin_od, r.payin_tp, r.payin_net
     payin_reward, payin_scheme = r.payin_reward, r.payin_scheme
+
+    defaulted_fields: List[str] = []
+    for field_key, raw_value in (
+        ("lob", r.lob), ("file_type", r.file_type), ("product", r.product),
+        ("policy_type", r.policy_type), ("plan_type", r.plan_type), ("sub_product", r.sub_product),
+        ("class", r.class_), ("sub_class", r.sub_class), ("make", r.make), ("model", r.model),
+        ("fuel_type", r.fuel_type), ("body_type", r.body_type), ("cpa_status", r.cpa_status),
+        ("ncb_status", r.ncb_status), ("partner_type", r.partner_type), ("state", r.state),
+        ("zone", r.zone), ("source", r.source), ("rto", r.rto), ("remarks", r.remarks),
+    ):
+        if clean(raw_value) is None:
+            defaulted_fields.append(field_key)
+    if r.vehicle_age_from is None:
+        defaulted_fields.append("vehicle_age_from")
+    if r.vehicle_age_to is None:
+        defaulted_fields.append("vehicle_age_to")
 
     return {
         "id": r.id,
@@ -98,4 +133,5 @@ def serialize_commission_rule(r: CommissionRule, db: Session) -> Dict[str, Any]:
         "warnings": r.warnings,
         "raw_json": r.raw_json,
         "slabs": [_serialize_slab(s) for s in r.slabs],
+        "_defaulted_fields": defaulted_fields,
     }

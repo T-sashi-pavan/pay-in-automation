@@ -17,3 +17,6 @@ pytesseract==0.3.13
 anthropic==0.116.0
 google-genai==2.11.0
 openai==1.68.2
+pypdf==6.12.1
+reportlab==5.0.0
+

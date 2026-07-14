@@ -17,6 +17,15 @@ export interface ColumnFactoryOptions {
   includeSourceFile?: boolean;
 }
 
+// A defaulted value (e.g. "ALL"/"NA" filled in because the source had nothing)
+// is flagged in amber/orange so it's visually distinct from a real extracted value.
+const DEFAULTED_CLASS = 'text-amber-600 dark:text-amber-400 italic';
+const DEFAULTED_TITLE = 'Default value — not extracted from the source file';
+
+function isFieldDefaulted(rowOriginal: any, field: string): boolean {
+  return Array.isArray(rowOriginal?._defaulted_fields) && rowOriginal._defaulted_fields.includes(field);
+}
+
 const expanderColumn = (opts: ColumnFactoryOptions): ColumnDef<any> => ({
   id: 'expander',
   enableSorting: false,
@@ -49,13 +58,18 @@ function textCol(
     cell: (info: any) => {
       const raw = (info.getValue() ?? null) as string | null;
       const label = labelKey ? ((info.row.original as any)[labelKey] as string | null) : null;
+      const defaulted = isFieldDefaulted(info.row.original, accessorKey);
       return (
         <EditableCell
           label={header}
           value={raw}
           fieldType={fieldType}
           suggestions={suggestions}
-          displayValue={<span className={valueClassName}>{(label ?? raw) || 'N/A'}</span>}
+          displayValue={
+            <span className={defaulted ? DEFAULTED_CLASS : valueClassName} title={defaulted ? DEFAULTED_TITLE : undefined}>
+              {(label ?? raw) || 'N/A'}
+            </span>
+          }
           onSave={(v) => opts.onEditRule(info.row.original.id, field, v)}
         />
       );
@@ -120,10 +134,13 @@ const vehicleAgeColumn: ColumnDef<any> = {
   cell: ({ row }) => {
     const from = row.original.vehicle_age_from;
     const to = row.original.vehicle_age_to;
+    const defaulted = isFieldDefaulted(row.original, 'vehicle_age_from') || isFieldDefaulted(row.original, 'vehicle_age_to');
+    const cls = defaulted ? DEFAULTED_CLASS : 'text-slate-500 dark:text-slate-400';
+    const title = defaulted ? DEFAULTED_TITLE : undefined;
     if (from === null && to === null) return <span className="text-slate-400 dark:text-slate-600">N/A</span>;
-    if (from !== null && to === null) return <span className="text-slate-500 dark:text-slate-400">&gt; {from} yrs</span>;
-    if (from === null && to !== null) return <span className="text-slate-500 dark:text-slate-400">Upto {to} yrs</span>;
-    return <span className="text-slate-500 dark:text-slate-400">{from} – {to} yrs</span>;
+    if (from !== null && to === null) return <span className={cls} title={title}>&gt; {from} yrs</span>;
+    if (from === null && to !== null) return <span className={cls} title={title}>Upto {to} yrs</span>;
+    return <span className={cls} title={title}>{from} – {to} yrs</span>;
   },
 };
 

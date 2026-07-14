@@ -34,31 +34,35 @@ export const ExpandedRuleDetails: React.FC<ExpandedRuleDetailsProps> = ({ rule, 
   const [activeTab, setActiveTab] = useState<'non-slab' | 'slab'>(commissionType === 'SLAB' ? 'slab' : 'non-slab');
   const [showRawJson, setShowRawJson] = useState(false);
 
+  const defaultedFields = rule._defaulted_fields || [];
+  const isDefaulted = (field: string) => defaultedFields.includes(field);
+  const DEFAULTED_TITLE = 'Default value — not extracted from the source file';
+
   const businessFields = [
-    { label: 'LOB', value: rule.lob },
-    { label: 'File Type', value: rule.file_type },
-    { label: 'Insurance Company', value: rule.insurance_company },
-    { label: 'Product', value: rule.product },
-    { label: 'Policy Type', value: rule.policy_type },
-    { label: 'Plan Type', value: rule.plan_type },
-    { label: 'Sub Product', value: rule.sub_product },
-    { label: 'Class', value: rule.class },
-    { label: 'Sub Class', value: rule.sub_class },
-    { label: 'Make', value: rule.make },
-    { label: 'Model', value: rule.model },
-    { label: 'Fuel Type', value: rule.fuel_type },
-    { label: 'Body Type', value: rule.body_type },
-    { label: 'Vehicle Age From', value: rule.vehicle_age_from !== null ? `${rule.vehicle_age_from} yrs` : null },
-    { label: 'Vehicle Age To', value: rule.vehicle_age_to !== null ? `${rule.vehicle_age_to} yrs` : null },
-    { label: 'CPA Status', value: rule.cpa_status },
-    { label: 'NCB Status', value: rule.ncb_status },
-    { label: 'Partner Type', value: rule.partner_type },
-    { label: 'State', value: rule.state },
-    { label: 'Zone', value: rule.zone },
-    { label: 'Source', value: rule.source },
-    { label: 'RTO', value: rule.rto },
-    { label: 'Effective Date', value: rule.effective_date },
-    { label: 'Remarks', value: rule.remarks }
+    { label: 'LOB', value: rule.lob, field: 'lob' },
+    { label: 'File Type', value: rule.file_type, field: 'file_type' },
+    { label: 'Insurance Company', value: rule.insurance_company, field: 'insurance_company' },
+    { label: 'Product', value: rule.product, field: 'product' },
+    { label: 'Policy Type', value: rule.policy_type, field: 'policy_type' },
+    { label: 'Plan Type', value: rule.plan_type, field: 'plan_type' },
+    { label: 'Sub Product', value: rule.sub_product, field: 'sub_product' },
+    { label: 'Class', value: rule.class, field: 'class' },
+    { label: 'Sub Class', value: rule.sub_class, field: 'sub_class' },
+    { label: 'Make', value: rule.make, field: 'make' },
+    { label: 'Model', value: rule.model, field: 'model' },
+    { label: 'Fuel Type', value: rule.fuel_type, field: 'fuel_type' },
+    { label: 'Body Type', value: rule.body_type, field: 'body_type' },
+    { label: 'Vehicle Age From', value: rule.vehicle_age_from !== null ? `${rule.vehicle_age_from} yrs` : null, field: 'vehicle_age_from' },
+    { label: 'Vehicle Age To', value: rule.vehicle_age_to !== null ? `${rule.vehicle_age_to} yrs` : null, field: 'vehicle_age_to' },
+    { label: 'CPA Status', value: rule.cpa_status, field: 'cpa_status' },
+    { label: 'NCB Status', value: rule.ncb_status, field: 'ncb_status' },
+    { label: 'Partner Type', value: rule.partner_type, field: 'partner_type' },
+    { label: 'State', value: rule.state, field: 'state' },
+    { label: 'Zone', value: rule.zone, field: 'zone' },
+    { label: 'Source', value: rule.source, field: 'source' },
+    { label: 'RTO', value: rule.rto, field: 'rto' },
+    { label: 'Effective Date', value: rule.effective_date, field: 'effective_date' },
+    { label: 'Remarks', value: rule.remarks, field: 'remarks' }
   ];
 
   const formatPercentage = (val: number | null) => {
@@ -161,14 +165,20 @@ export const ExpandedRuleDetails: React.FC<ExpandedRuleDetailsProps> = ({ rule, 
                     Business Details
                   </h4>
                   <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                    {businessFields.map((f, i) => (
-                      <div key={i} className="bg-slate-50 dark:bg-slate-900/20 border border-[#E5E7EB] dark:border-slate-900/60 rounded-xl p-3 flex flex-col justify-center">
-                        <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">{f.label}</span>
-                        <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 mt-1 truncate" title={f.value?.toString() || ''}>
-                          {f.value !== null && f.value !== undefined && f.value !== '' ? String(f.value) : <span className="text-slate-300 dark:text-slate-700 italic">None</span>}
-                        </span>
-                      </div>
-                    ))}
+                    {businessFields.map((f, i) => {
+                      const defaulted = isDefaulted(f.field);
+                      return (
+                        <div key={i} className="bg-slate-50 dark:bg-slate-900/20 border border-[#E5E7EB] dark:border-slate-900/60 rounded-xl p-3 flex flex-col justify-center">
+                          <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">{f.label}</span>
+                          <span
+                            className={`text-xs font-semibold mt-1 truncate ${defaulted ? 'text-amber-600 dark:text-amber-400 italic' : 'text-slate-800 dark:text-slate-200'}`}
+                            title={defaulted ? DEFAULTED_TITLE : (f.value?.toString() || '')}
+                          >
+                            {f.value !== null && f.value !== undefined && f.value !== '' ? String(f.value) : <span className="text-slate-300 dark:text-slate-700 italic">None</span>}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -224,14 +234,20 @@ export const ExpandedRuleDetails: React.FC<ExpandedRuleDetailsProps> = ({ rule, 
                     Business Details
                   </h4>
                   <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                    {businessFields.map((f, i) => (
-                      <div key={i} className="bg-slate-50 dark:bg-slate-900/20 border border-[#E5E7EB] dark:border-slate-900/60 rounded-xl p-3 flex flex-col justify-center">
-                        <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">{f.label}</span>
-                        <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 mt-1 truncate" title={f.value?.toString() || ''}>
-                          {f.value !== null && f.value !== undefined && f.value !== '' ? String(f.value) : <span className="text-slate-300 dark:text-slate-700 italic">None</span>}
-                        </span>
-                      </div>
-                    ))}
+                    {businessFields.map((f, i) => {
+                      const defaulted = isDefaulted(f.field);
+                      return (
+                        <div key={i} className="bg-slate-50 dark:bg-slate-900/20 border border-[#E5E7EB] dark:border-slate-900/60 rounded-xl p-3 flex flex-col justify-center">
+                          <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">{f.label}</span>
+                          <span
+                            className={`text-xs font-semibold mt-1 truncate ${defaulted ? 'text-amber-600 dark:text-amber-400 italic' : 'text-slate-800 dark:text-slate-200'}`}
+                            title={defaulted ? DEFAULTED_TITLE : (f.value?.toString() || '')}
+                          >
+                            {f.value !== null && f.value !== undefined && f.value !== '' ? String(f.value) : <span className="text-slate-300 dark:text-slate-700 italic">None</span>}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -262,18 +278,28 @@ export const ExpandedRuleDetails: React.FC<ExpandedRuleDetailsProps> = ({ rule, 
                                     {tierIdx + 1}
                                   </span>
                                 </td>
-                                <td className="px-4 py-2.5 text-xs font-bold text-[#4F46E5] dark:text-indigo-300">
-                                  <EditableCell label="Pay-In Type" value={slab.payin_type} displayValue={<span>{slab.payin_type || 'N/A'}</span>} onSave={(v) => editSlab('payin_type', v)} disabled={!onEditSlab} />
-                                </td>
-                                <td className="px-4 py-2.5 text-xs text-slate-700 dark:text-slate-300">
-                                  <EditableCell label="Premium Type" value={slab.premium_type} displayValue={<span>{slab.premium_type || 'N/A'}</span>} onSave={(v) => editSlab('premium_type', v)} disabled={!onEditSlab} />
-                                </td>
-                                <td className="px-4 py-2.5 text-xs text-slate-800 dark:text-slate-200 font-mono">
-                                  <EditableCell label="Pay-In Slab From" value={slab.slab_from} fieldType="number" displayValue={<span>{slab.slab_from !== null ? slab.slab_from.toLocaleString() : '0'}</span>} onSave={(v) => editSlab('slab_from', v)} disabled={!onEditSlab} />
-                                </td>
-                                <td className="px-4 py-2.5 text-xs text-slate-800 dark:text-slate-200 font-mono">
-                                  <EditableCell label="Pay-In Slab Upto" value={slab.slab_to} fieldType="number" displayValue={<span>{slab.slab_to !== null ? slab.slab_to.toLocaleString() : '∞'}</span>} onSave={(v) => editSlab('slab_to', v)} disabled={!onEditSlab} />
-                                </td>
+                                {(() => {
+                                  const slabDefaulted = slab._defaulted_fields || [];
+                                  const cellCls = (field: string, base: string) =>
+                                    slabDefaulted.includes(field) ? 'text-amber-600 dark:text-amber-400 italic' : base;
+                                  const cellTitle = (field: string) => slabDefaulted.includes(field) ? DEFAULTED_TITLE : undefined;
+                                  return (
+                                    <>
+                                      <td className="px-4 py-2.5 text-xs font-bold text-[#4F46E5] dark:text-indigo-300">
+                                        <EditableCell label="Pay-In Type" value={slab.payin_type} displayValue={<span className={cellCls('payin_type', '')} title={cellTitle('payin_type')}>{slab.payin_type || 'N/A'}</span>} onSave={(v) => editSlab('payin_type', v)} disabled={!onEditSlab} />
+                                      </td>
+                                      <td className="px-4 py-2.5 text-xs text-slate-700 dark:text-slate-300">
+                                        <EditableCell label="Premium Type" value={slab.premium_type} displayValue={<span className={cellCls('premium_type', '')} title={cellTitle('premium_type')}>{slab.premium_type || 'N/A'}</span>} onSave={(v) => editSlab('premium_type', v)} disabled={!onEditSlab} />
+                                      </td>
+                                      <td className="px-4 py-2.5 text-xs text-slate-800 dark:text-slate-200 font-mono">
+                                        <EditableCell label="Pay-In Slab From" value={slab.slab_from} fieldType="number" displayValue={<span className={cellCls('slab_from', '')} title={cellTitle('slab_from')}>{slab.slab_from !== null ? slab.slab_from.toLocaleString() : '0'}</span>} onSave={(v) => editSlab('slab_from', v)} disabled={!onEditSlab} />
+                                      </td>
+                                      <td className="px-4 py-2.5 text-xs text-slate-800 dark:text-slate-200 font-mono">
+                                        <EditableCell label="Pay-In Slab Upto" value={slab.slab_to} fieldType="number" displayValue={<span className={cellCls('slab_to', '')} title={cellTitle('slab_to')}>{slab.slab_to !== null ? slab.slab_to.toLocaleString() : '∞'}</span>} onSave={(v) => editSlab('slab_to', v)} disabled={!onEditSlab} />
+                                      </td>
+                                    </>
+                                  );
+                                })()}
                                 <td className="px-4 py-2.5 text-xs font-bold text-right text-emerald-600 dark:text-emerald-400">
                                   <EditableCell label="Pay-In OD" value={slab.payin_od} fieldType="number" displayValue={<span>{formatPercentage(slab.payin_od)}</span>} onSave={(v) => editSlab('payin_od', v)} disabled={!onEditSlab} className="justify-end" />
                                 </td>
