@@ -24,6 +24,7 @@ import {
   Search,
   Filter,
   Download,
+  Code,
   ChevronRight,
   ChevronDown,
   ChevronLeft,
@@ -231,7 +232,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
     // so "export" always matches what's currently on screen.
     const exportParams: Record<string, any> = {};
     Object.entries(filters).forEach(([key, val]) => {
-      if (!val) return;
+      if (!val || key === 'commission_type' || key === 'commissionType') return;
       if (key === 'company') exportParams['company'] = val;
       else if (key === 'status' || key === 'validation_status') exportParams['validation_status'] = val;
       else if (key === 'hasSlabs') exportParams['has_slabs'] = val;
@@ -239,6 +240,20 @@ export const Dashboard: React.FC<DashboardProps> = ({
       else exportParams[key] = val;
     });
     window.location.href = api.getExportUrl(selectedUploadId, exportParams);
+  };
+
+  const handleExportJson = () => {
+    if (!selectedUploadId) return;
+    const exportParams: Record<string, any> = {};
+    Object.entries(filters).forEach(([key, val]) => {
+      if (!val || key === 'commission_type' || key === 'commissionType') return;
+      if (key === 'company') exportParams['company'] = val;
+      else if (key === 'status' || key === 'validation_status') exportParams['validation_status'] = val;
+      else if (key === 'hasSlabs') exportParams['has_slabs'] = val;
+      else if (key === 'vehicleAge') exportParams['vehicle_age'] = val;
+      else exportParams[key] = val;
+    });
+    window.location.href = api.getExportJsonUrl(selectedUploadId, exportParams);
   };
 
   const getOpts = (key: string): FilterOption[] => {
@@ -541,9 +556,18 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   type="button"
                   onClick={() => { handleExportExcel(); closeMore(); }}
                   disabled={records.length === 0}
-                  className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer"
+                  className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer w-full text-left"
                 >
                   <Download className="w-4 h-4" /> Download Excel (.xlsx)
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => { handleExportJson(); closeMore(); }}
+                  disabled={records.length === 0}
+                  className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 transition-colors cursor-pointer w-full text-left"
+                >
+                  <Code className="w-4 h-4 text-purple-500" /> Download JSON (.json)
                 </button>
               </div>
             )}

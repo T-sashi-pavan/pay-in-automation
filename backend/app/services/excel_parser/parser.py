@@ -55,7 +55,7 @@ def extract_numeric_range(text: str) -> Tuple[Optional[float], Optional[float]]:
         if ">" in text_clean:
             return num, None
         elif "<" in text_clean or "upto" in text_clean.lower() or "up to" in text_clean.lower() or "under" in text_clean.lower():
-            return 0.0, num
+            return 1.0, num
             
     return None, None
 
@@ -977,6 +977,9 @@ class ExcelParserService:
                             # SLAB_HINT_KEYWORDS / _classify_columns).
                             slab_from, slab_to = extract_numeric_range(param_vals.get("_slab_hint_text"))
 
+                        if slab_from is not None and (slab_from == 0.0 or slab_from == 0):
+                            slab_from = 1.0
+
                         payin_type = str(flat_rates.get("payin_type")).strip() if flat_rates.get("payin_type") is not None else "PERCENTAGE"
                         premium_type = str(flat_rates.get("premium_type")).strip() if flat_rates.get("premium_type") is not None else None
                         
@@ -1139,6 +1142,26 @@ class ExcelParserService:
                         slab_obj["slab_to"] = slab_to
                         merged_slabs.append(slab_obj)
                 
+                # Normalize and deduplicate slabs
+                for s in merged_slabs:
+                    if s.get("slab_from") is not None and (s["slab_from"] == 0.0 or s["slab_from"] == 0):
+                        s["slab_from"] = 1.0
+
+                unique_slabs = []
+                seen_slab_keys = set()
+                for s in merged_slabs:
+                    s_key = (
+                        s.get("slab_from"),
+                        s.get("slab_to"),
+                        s.get("payin_od"),
+                        s.get("payin_tp"),
+                        s.get("payin_net"),
+                    )
+                    if s_key not in seen_slab_keys:
+                        seen_slab_keys.add(s_key)
+                        unique_slabs.append(s)
+                merged_slabs = unique_slabs
+                
                 base_rule["slabs"] = merged_slabs
                 dup_warnings = check_duplicate_slab_ranges(merged_slabs)
                 if dup_warnings:
@@ -1158,6 +1181,13 @@ class ExcelParserService:
                 
                 final_rules.append(base_rule)
                 
+        # Post-process: ensure all slab_from values equal to 0.0 or 0 are normalized to 1.0
+        for r in final_rules:
+            if r.get("slabs"):
+                for s in r["slabs"]:
+                    if s.get("slab_from") is not None and (s["slab_from"] == 0.0 or s["slab_from"] == 0):
+                        s["slab_from"] = 1.0
+                        
         print(f"[WORKBOOK PARSING COMPLETED] Grouped {len(all_parsed_rules)} rules into {len(final_rules)} merged rules.")
         return final_rules
 

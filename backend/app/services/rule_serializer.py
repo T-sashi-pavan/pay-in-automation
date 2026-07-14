@@ -26,7 +26,7 @@ def _serialize_slab(s) -> Dict[str, Any]:
         "premium_type": default_or(
             s.premium_type, "OD" if payin_od is not None else ("TP" if payin_tp is not None else "NET")
         ),
-        "slab_from": s.slab_from if s.slab_from is not None else 1,
+        "slab_from": s.slab_from if (s.slab_from is not None and s.slab_from != 0 and s.slab_from != 0.0) else 1,
         "slab_to": s.slab_to if s.slab_to is not None else 500000,
         "payin_od": payin_od,
         "payout_od": compute_payout(payin_od),

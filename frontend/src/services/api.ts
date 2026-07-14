@@ -156,4 +156,15 @@ export const api = {
     const qs = query.toString();
     return `${API_BASE_URL}/uploads/${id}/export${qs ? `?${qs}` : ''}`;
   },
+
+  getExportJsonUrl: (id: number, params: Record<string, any> = {}): string => {
+    const query = new URLSearchParams();
+    Object.entries(params).forEach(([key, val]) => {
+      if (val !== undefined && val !== null && val !== '') {
+        query.set(key, String(val));
+      }
+    });
+    const qs = query.toString();
+    return `${API_BASE_URL}/uploads/${id}/export/json${qs ? `?${qs}` : ''}`;
+  },
 };

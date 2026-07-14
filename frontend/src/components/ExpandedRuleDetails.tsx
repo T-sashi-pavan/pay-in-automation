@@ -200,14 +200,20 @@ export const ExpandedRuleDetails: React.FC<ExpandedRuleDetailsProps> = ({ rule, 
                       { label: 'Pay-Out Reward', val: rule.payout_reward },
                       { label: 'Pay-In Scheme', val: rule.payin_scheme },
                       { label: 'Pay-Out Scheme', val: rule.payout_scheme }
-                    ].map((c, i) => (
-                      <div key={i} className="bg-slate-50 dark:bg-slate-900/30 border border-[#E5E7EB] dark:border-slate-900/60 rounded-xl p-3 flex flex-col items-center justify-center text-center">
-                        <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">{c.label}</span>
-                        <span className={`text-sm font-black mt-1 ${i % 2 === 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
-                          {formatPercentage(c.val)}
-                        </span>
-                      </div>
-                    ))}
+                    ].map((c, i) => {
+                      const isZeroOrNull = c.val === null || c.val === undefined || c.val === 0;
+                      const colorClass = isZeroOrNull
+                        ? 'text-slate-400 dark:text-slate-600'
+                        : (i % 2 === 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400');
+                      return (
+                        <div key={i} className="bg-slate-50 dark:bg-slate-900/30 border border-[#E5E7EB] dark:border-slate-900/60 rounded-xl p-3 flex flex-col items-center justify-center text-center">
+                          <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">{c.label}</span>
+                          <span className={`text-sm font-black mt-1 ${colorClass}`}>
+                            {formatPercentage(c.val)}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -271,6 +277,14 @@ export const ExpandedRuleDetails: React.FC<ExpandedRuleDetailsProps> = ({ rule, 
                         <tbody className="divide-y divide-[#E5E7EB]/70 dark:divide-slate-800/40">
                           {rule.slabs.map((slab, tierIdx) => {
                             const editSlab = (field: EditableSlabField, value: string) => onEditSlab?.(slab.id, field, value);
+                            const isOdZero = slab.payin_od === null || slab.payin_od === undefined || slab.payin_od === 0;
+                            const isTpZero = slab.payin_tp === null || slab.payin_tp === undefined || slab.payin_tp === 0;
+                            const isNetZero = slab.payin_net === null || slab.payin_net === undefined || slab.payin_net === 0;
+                            
+                            const isOdPayoutZero = slab.payout_od === null || slab.payout_od === undefined || slab.payout_od === 0;
+                            const isTpPayoutZero = slab.payout_tp === null || slab.payout_tp === undefined || slab.payout_tp === 0;
+                            const isNetPayoutZero = slab.payout_net === null || slab.payout_net === undefined || slab.payout_net === 0;
+
                             return (
                               <tr key={slab.id} className="hover:bg-slate-100 dark:hover:bg-slate-900/20 transition-colors">
                                 <td className="px-4 py-2.5">
@@ -300,18 +314,18 @@ export const ExpandedRuleDetails: React.FC<ExpandedRuleDetailsProps> = ({ rule, 
                                     </>
                                   );
                                 })()}
-                                <td className="px-4 py-2.5 text-xs font-bold text-right text-emerald-600 dark:text-emerald-400">
+                                <td className={`px-4 py-2.5 text-xs font-bold text-right ${isOdZero ? 'text-slate-400 dark:text-slate-600' : 'text-emerald-600 dark:text-emerald-400'}`}>
                                   <EditableCell label="Pay-In OD" value={slab.payin_od} fieldType="number" displayValue={<span>{formatPercentage(slab.payin_od)}</span>} onSave={(v) => editSlab('payin_od', v)} disabled={!onEditSlab} className="justify-end" />
                                 </td>
-                                <td className="px-4 py-2.5 text-xs font-bold text-right text-amber-600 dark:text-amber-400">{formatPercentage(slab.payout_od)}</td>
-                                <td className="px-4 py-2.5 text-xs font-bold text-right text-emerald-600 dark:text-emerald-400">
+                                <td className={`px-4 py-2.5 text-xs font-bold text-right ${isOdPayoutZero ? 'text-slate-400 dark:text-slate-600' : 'text-amber-600 dark:text-amber-400'}`}>{formatPercentage(slab.payout_od)}</td>
+                                <td className={`px-4 py-2.5 text-xs font-bold text-right ${isTpZero ? 'text-slate-400 dark:text-slate-600' : 'text-emerald-600 dark:text-emerald-400'}`}>
                                   <EditableCell label="Pay-In TP" value={slab.payin_tp} fieldType="number" displayValue={<span>{formatPercentage(slab.payin_tp)}</span>} onSave={(v) => editSlab('payin_tp', v)} disabled={!onEditSlab} className="justify-end" />
                                 </td>
-                                <td className="px-4 py-2.5 text-xs font-bold text-right text-amber-600 dark:text-amber-400">{formatPercentage(slab.payout_tp)}</td>
-                                <td className="px-4 py-2.5 text-xs font-bold text-right text-emerald-600 dark:text-emerald-400">
+                                <td className={`px-4 py-2.5 text-xs font-bold text-right ${isTpPayoutZero ? 'text-slate-400 dark:text-slate-600' : 'text-amber-600 dark:text-amber-400'}`}>{formatPercentage(slab.payout_tp)}</td>
+                                <td className={`px-4 py-2.5 text-xs font-bold text-right ${isNetZero ? 'text-slate-400 dark:text-slate-600' : 'text-emerald-600 dark:text-emerald-400'}`}>
                                   <EditableCell label="Pay-In Net" value={slab.payin_net} fieldType="number" displayValue={<span>{formatPercentage(slab.payin_net)}</span>} onSave={(v) => editSlab('payin_net', v)} disabled={!onEditSlab} className="justify-end" />
                                 </td>
-                                <td className="px-4 py-2.5 text-xs font-bold text-right text-amber-600 dark:text-amber-400">{formatPercentage(slab.payout_net)}</td>
+                                <td className={`px-4 py-2.5 text-xs font-bold text-right ${isNetPayoutZero ? 'text-slate-400 dark:text-slate-600' : 'text-amber-600 dark:text-amber-400'}`}>{formatPercentage(slab.payout_net)}</td>
                               </tr>
                             );
                           })}

@@ -111,7 +111,11 @@ function rateCol(accessorKey: string, header: string, field: EditableRuleField, 
     header,
     cell: (info: any) => {
       const raw = (info.getValue() ?? null) as number | null;
-      const display = <span className={`${colorClass} font-mono`}>{raw !== null ? `${raw}%` : '-'}</span>;
+      const isZeroOrNull = raw === null || raw === undefined || raw === 0;
+      const displayCls = isZeroOrNull
+        ? 'text-slate-400 dark:text-slate-600 font-mono'
+        : `${colorClass} font-mono`;
+      const display = <span className={displayCls}>{raw !== null ? `${raw}%` : '-'}</span>;
       // Pay-Out is always 80% of Pay-In, computed server-side — not independently editable.
       if (direction === 'out') return display;
       return (

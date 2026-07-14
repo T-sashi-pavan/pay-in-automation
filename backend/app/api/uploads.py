@@ -2,6 +2,8 @@ import os
 import shutil
 import uuid
 import logging
+import json
+from io import BytesIO
 from urllib.parse import quote
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query, BackgroundTasks
 from fastapi.responses import StreamingResponse
@@ -522,6 +524,67 @@ def export_extracted_records(
     return StreamingResponse(
         buffer,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+    )
+
+
+@router.get("/uploads/{upload_id}/export/json")
+def export_upload_json(
+    upload_id: int,
+    search: Optional[str] = None,
+    lob: Optional[str] = None,
+    file_type: Optional[str] = None,
+    company: Optional[str] = None,
+    product: Optional[str] = None,
+    policy_type: Optional[str] = None,
+    plan_type: Optional[str] = None,
+    sub_product: Optional[str] = None,
+    class_name: Optional[str] = Query(None, alias="class"),
+    sub_class: Optional[str] = None,
+    make: Optional[str] = None,
+    model: Optional[str] = None,
+    fuel_type: Optional[str] = None,
+    body_type: Optional[str] = None,
+    cpa_status: Optional[str] = None,
+    ncb_status: Optional[str] = None,
+    partner_type: Optional[str] = None,
+    state: Optional[str] = None,
+    zone: Optional[str] = None,
+    source: Optional[str] = None,
+    rto: Optional[str] = None,
+    validation_status: Optional[str] = None,
+    commission_type: Optional[str] = None,
+    has_slabs: Optional[bool] = None,
+    vehicle_age: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    upload = db.query(UploadHistory).filter(UploadHistory.id == upload_id).first()
+    if not upload:
+        raise HTTPException(status_code=404, detail="Upload record not found.")
+
+    query = db.query(CommissionRule).options(joinedload(CommissionRule.slabs)).filter(CommissionRule.upload_id == upload_id)
+    query = _apply_rule_filters(
+        query, db, search=search, lob=lob, file_type=file_type, company=company, product=product,
+        policy_type=policy_type, plan_type=plan_type, sub_product=sub_product, class_name=class_name,
+        sub_class=sub_class, make=make, model=model, fuel_type=fuel_type, body_type=body_type,
+        cpa_status=cpa_status, ncb_status=ncb_status, partner_type=partner_type, state=state,
+        zone=zone, source=source, rto=rto, validation_status=validation_status,
+        commission_type=commission_type, has_slabs=has_slabs, vehicle_age=vehicle_age,
+    )
+    rules = query.all()
+    
+    serialized_rules = []
+    for r in rules:
+        serialized_rules.append(serialize_commission_rule(r, db))
+        
+    safe_name = "".join(c for c in (upload.filename or "export") if c.isalnum() or c in " ._-").strip() or "export"
+    filename = f"CRM_Export_{safe_name}.json"
+    
+    json_bytes = json.dumps(serialized_rules, default=str, indent=2).encode("utf-8")
+    buffer = BytesIO(json_bytes)
+    return StreamingResponse(
+        buffer,
+        media_type="application/json",
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
     )
 
