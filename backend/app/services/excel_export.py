@@ -45,17 +45,23 @@ NON_SLAB_RATE_COLUMNS: List[tuple] = [
     ("Pay-In Scheme", "payin_scheme"), ("Pay-Out Scheme", "payout_scheme"),
 ]
 
+# Slab tier detail columns — written once per slab row (vertical / CRM-Ready layout)
 SLAB_TIER_COLUMNS: List[tuple] = [
-    ("Pay-In Type", "payin_type"), ("Premium Type", "premium_type"),
-    ("Slab From", "slab_from"), ("Slab Upto", "slab_to"),
-    ("Pay-In OD", "payin_od"), ("Pay-Out OD", "payout_od"),
-    ("Pay-In TP", "payin_tp"), ("Pay-Out TP", "payout_tp"),
-    ("Pay-In Net", "payin_net"), ("Pay-Out Net", "payout_net"),
+    ("Pay-In Type", "payin_type"),
+    ("Premium Type", "premium_type"),
+    ("Payin Slab From", "slab_from"),
+    ("Payin Slab To", "slab_to"),
+    ("Pay-In OD", "payin_od"),
+    ("Pay-In TP", "payin_tp"),
+    ("Pay-In Net", "payin_net"),
+    ("Pay-Out OD", "payout_od"),
+    ("Pay-Out TP", "payout_tp"),
+    ("Pay-Out Net", "payout_net"),
 ]
 
 HEADER_FONT = Font(bold=True, color="FFFFFF")
 HEADER_FILL = PatternFill(start_color="4F46E5", end_color="4F46E5", fill_type="solid")
-DEFAULTED_FONT = Font(color="6D28D9")  # purple-700 — flags a business-default value, not a real extracted one
+DEFAULTED_FONT = Font(color="6D28D9")  # purple-700 — flags a business-default, not a real extracted value
 PARENT_ROW_FONT = Font(bold=True)
 PARENT_ROW_FILL = PatternFill(start_color="EEF2FF", end_color="EEF2FF", fill_type="solid")
 
@@ -66,11 +72,15 @@ THIN_BORDER = Border(
     bottom=Side(style='thin', color='CCCCCC')
 )
 
+CENTER_ALIGN = Alignment(horizontal="center", vertical="center", wrap_text=True)
+TOP_ALIGN = Alignment(vertical="top", wrap_text=True)
+
 
 def _style_header_row(ws, row_idx: int = 1) -> None:
     for cell in ws[row_idx]:
         cell.font = HEADER_FONT
         cell.fill = HEADER_FILL
+        cell.alignment = CENTER_ALIGN
 
 
 def _autosize_columns(ws) -> None:
@@ -83,151 +93,131 @@ def _autosize_columns(ws) -> None:
 
 def build_export_workbook(rules: List[CommissionRule], db: Session) -> BytesIO:
     """
-    Generates a two-sheet .xlsx (Non-Slab, Slab) from the FULL filtered set of
-    CommissionRule ORM objects — not the paginated page the browser happens to
-    have loaded. Reuses serialize_commission_rule so exported values match
-    exactly what the UI shows (including business defaults like "ALL"/"NA"),
-    and flags any defaulted (non-real) cell in orange via `_defaulted_fields`
-    the same serializer already reports.
+    Generates a two-sheet .xlsx (Non-Slab, Slab).
+
+    Non-Slab sheet: one flat row per rule, business + rate columns.
+
+    Slab sheet: CRM-Ready vertical merged-rows layout (matches Image 4).
+        Single header row: [Business cols...] [Pay-In Type] [Premium Type]
+                           [Payin Slab From] [Payin Slab To] [OD] [TP] [Net] [Payout OD] ...
+        One data row per slab TIER, business columns merged vertically per rule.
     """
     non_slab_rules = [r for r in rules if r.commission_type != "SLAB"]
     slab_rules = [r for r in rules if r.commission_type == "SLAB"]
 
     wb = Workbook()
 
-    # --- NON-SLAB SHEET ---
+    # ── NON-SLAB SHEET ──────────────────────────────────────────────────────────
     ws_ns = wb.active
     ws_ns.title = "Non-Slab"
     ws_ns.append([label for label, _ in BUSINESS_COLUMNS] + [label for label, _ in NON_SLAB_RATE_COLUMNS])
     _style_header_row(ws_ns)
-    
-    # Freeze header row
     ws_ns.freeze_panes = "A2"
-    
+
     for rule in non_slab_rules:
         data = serialize_commission_rule(rule, db)
         defaulted = set(data.get("_defaulted_fields") or [])
-        row_values = [data.get(field) for _, field in BUSINESS_COLUMNS] + [data.get(field) for _, field in NON_SLAB_RATE_COLUMNS]
+        row_values = (
+            [data.get(field) for _, field in BUSINESS_COLUMNS]
+            + [data.get(field) for _, field in NON_SLAB_RATE_COLUMNS]
+        )
         ws_ns.append(row_values)
         excel_row = ws_ns.max_row
         for col_idx, (_, field) in enumerate(BUSINESS_COLUMNS, start=1):
             if field in defaulted:
                 ws_ns.cell(row=excel_row, column=col_idx).font = DEFAULTED_FONT
 
-    # Apply thin borders to all Non-Slab cells
     for row in ws_ns.iter_rows(min_row=1, max_row=ws_ns.max_row, min_col=1, max_col=ws_ns.max_column):
         for cell in row:
             cell.border = THIN_BORDER
 
     _autosize_columns(ws_ns)
 
-    # --- SLAB SHEET ---
+    # ── SLAB SHEET ──────────────────────────────────────────────────────────────
+    # Layout (CRM-Ready / Image 4):
+    #
+    #   Row 1 — header: [Biz cols... | Pay-In Type | Premium Type | Slab From | Slab To | OD | TP | Net | ...]
+    #   Row 2+ — one row per slab tier; business cells merged vertically for each rule block.
+    #
+    #   Example (2-tier rule):
+    #     | Motor | ... | Column: GJ - Comp | PERCENTAGE | OD | 0    | 0    | 60% | - | - | ...
+    #     |       |     |                   | PERCENTAGE | OD | 1    | OPEN | 85% | - | - | ...
+    #     | Motor | ... | Column: MH - TP   | PERCENTAGE | TP | 0    | 0    | -   | 22| - | ...
+    #
     ws_sl = wb.create_sheet("Slab")
-    
-    # Freeze header rows (top 3 rows)
-    ws_sl.freeze_panes = "A4"
+    ws_sl.freeze_panes = "A2"
 
-    # 1. Pre-serialize slab rules to determine max slabs count
-    serialized_slab_rules = []
-    max_slabs = 0
-    for r in slab_rules:
-        data = serialize_commission_rule(r, db)
-        serialized_slab_rules.append(data)
-        slabs = data.get("slabs") or []
-        if len(slabs) > max_slabs:
-            max_slabs = len(slabs)
-            
-    # Guarantee at least 1 slab set of headers if there are no rules or max_slabs is 0
-    if max_slabs == 0:
-        max_slabs = 1
+    n_biz = len(BUSINESS_COLUMNS)
+    n_tier = len(SLAB_TIER_COLUMNS)
+    total_cols = n_biz + n_tier
 
-    business_col_count = len(BUSINESS_COLUMNS)
-    tier_col_count = len(SLAB_TIER_COLUMNS)
-    total_cols = business_col_count + max_slabs * tier_col_count
-
-    # Row 1 (Header level 1)
-    row1 = [label for label, _ in BUSINESS_COLUMNS] + [None] * (max_slabs * tier_col_count)
-    row1[business_col_count] = "SLAB STRUCTURE"
-    ws_sl.append(row1)
-
-    # Row 2 (Header level 2)
-    row2 = [None] * business_col_count
-    for i in range(1, max_slabs + 1):
-        row2.extend([f"Tier {i}"] + [None] * (tier_col_count - 1))
-    ws_sl.append(row2)
-
-    # Row 3 (Header level 3)
-    row3 = [None] * business_col_count
-    for i in range(1, max_slabs + 1):
-        row3.extend([label for label, _ in SLAB_TIER_COLUMNS])
-    ws_sl.append(row3)
-
-    # Perform Merges
-    # Merge Row 1 Slab Structure
-    ws_sl.merge_cells(
-        start_row=1, start_column=business_col_count + 1,
-        end_row=1, end_column=total_cols
+    # Single header row
+    ws_sl.append(
+        [label for label, _ in BUSINESS_COLUMNS]
+        + [label for label, _ in SLAB_TIER_COLUMNS]
     )
-    # Merge Row 2 Tiers
-    for i in range(1, max_slabs + 1):
-        start_col = business_col_count + (i - 1) * tier_col_count + 1
-        ws_sl.merge_cells(
-            start_row=2, start_column=start_col,
-            end_row=2, end_column=start_col + tier_col_count - 1
-        )
-    # Merge Business Columns Vertically (Rows 1 to 3)
-    for col_idx in range(1, business_col_count + 1):
-        ws_sl.merge_cells(
-            start_row=1, start_column=col_idx,
-            end_row=3, end_column=col_idx
-        )
+    _style_header_row(ws_sl, row_idx=1)
 
-    # Style Header cells in rows 1, 2, 3
-    center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    for r_idx in range(1, 4):
-        for col_idx in range(1, total_cols + 1):
-            cell = ws_sl.cell(row=r_idx, column=col_idx)
-            cell.font = HEADER_FONT
-            cell.fill = HEADER_FILL
-            cell.alignment = center_align
-
-    # 3. Write rules as single flat rows (starting at row 4)
-    for data in serialized_slab_rules:
+    # Data rows
+    for rule in slab_rules:
+        data = serialize_commission_rule(rule, db)
         defaulted = set(data.get("_defaulted_fields") or [])
-        business_values = [data.get(field) for _, field in BUSINESS_COLUMNS]
-        
-        row_values = business_values.copy()
         slabs = data.get("slabs") or []
-        for i in range(max_slabs):
-            if i < len(slabs):
-                slab = slabs[i]
-                slab_values = [slab.get(field) for _, field in SLAB_TIER_COLUMNS]
-                row_values.extend(slab_values)
-            else:
-                row_values.extend([None] * tier_col_count)
-                
-        ws_sl.append(row_values)
-        excel_row = ws_sl.max_row
-        
-        # Style business column cells if defaulted
-        for col_idx, (_, field) in enumerate(BUSINESS_COLUMNS, start=1):
-            if field in defaulted:
-                ws_sl.cell(row=excel_row, column=col_idx).font = DEFAULTED_FONT
-                
-        # Style slab columns cells if defaulted
-        for i in range(max_slabs):
-            if i < len(slabs):
-                slab = slabs[i]
-                slab_defaulted = set(slab.get("_defaulted_fields") or [])
-                start_col = business_col_count + i * tier_col_count + 1
-                for col_idx, (_, field) in enumerate(SLAB_TIER_COLUMNS, start=start_col):
-                    if field in slab_defaulted:
-                        ws_sl.cell(row=excel_row, column=col_idx).font = DEFAULTED_FONT
 
-    # Apply thin borders to all cells
-    for row in ws_sl.iter_rows(min_row=1, max_row=ws_sl.max_row, min_col=1, max_col=ws_sl.max_column):
-        for cell in row:
-            cell.border = THIN_BORDER
+        if not slabs:
+            slabs = [{}]  # at least one row per rule
+
+        business_values = [data.get(field) for _, field in BUSINESS_COLUMNS]
+        first_rule_row = ws_sl.max_row + 1
+
+        for tier_idx, slab in enumerate(slabs):
+            slab_values = [slab.get(field) for _, field in SLAB_TIER_COLUMNS]
+
+            if tier_idx == 0:
+                ws_sl.append(business_values + slab_values)
+            else:
+                # Business columns blank — will be merged with first_rule_row
+                ws_sl.append([None] * n_biz + slab_values)
+
+            excel_row = ws_sl.max_row
+
+            # Style business column cells (first tier row only, others merged away)
+            if tier_idx == 0:
+                for col_idx, (_, field) in enumerate(BUSINESS_COLUMNS, start=1):
+                    cell = ws_sl.cell(row=excel_row, column=col_idx)
+                    cell.border = THIN_BORDER
+                    cell.alignment = TOP_ALIGN
+                    if field in defaulted:
+                        cell.font = DEFAULTED_FONT
+
+            # Style slab tier columns
+            slab_defaulted = set(slab.get("_defaulted_fields") or [])
+            for col_idx, (_, field) in enumerate(SLAB_TIER_COLUMNS, start=n_biz + 1):
+                cell = ws_sl.cell(row=excel_row, column=col_idx)
+                cell.border = THIN_BORDER
+                cell.alignment = CENTER_ALIGN
+                if field in slab_defaulted:
+                    cell.font = DEFAULTED_FONT
+
+        last_rule_row = ws_sl.max_row
+
+        # Merge business columns vertically across all tier rows of this rule
+        if last_rule_row > first_rule_row:
+            for col_idx in range(1, n_biz + 1):
+                ws_sl.merge_cells(
+                    start_row=first_rule_row, start_column=col_idx,
+                    end_row=last_rule_row, end_column=col_idx
+                )
+                ws_sl.cell(row=first_rule_row, column=col_idx).alignment = TOP_ALIGN
+
+        # Medium bottom border = visual rule separator between different business rules
+        for col_idx in range(1, total_cols + 1):
+            ws_sl.cell(row=last_rule_row, column=col_idx).border = Border(
+                left=Side(style='thin', color='CCCCCC'),
+                right=Side(style='thin', color='CCCCCC'),
+                top=Side(style='thin', color='CCCCCC'),
+                bottom=Side(style='medium', color='4F46E5'),
+            )
 
     _autosize_columns(ws_sl)
 
@@ -235,3 +225,4 @@ def build_export_workbook(rules: List[CommissionRule], db: Session) -> BytesIO:
     wb.save(buffer)
     buffer.seek(0)
     return buffer
+

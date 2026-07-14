@@ -114,6 +114,18 @@ def serialize_commission_rule(r: CommissionRule, db: Session) -> Dict[str, Any]:
                 is_age_slab = True
                 break
 
+    # Sort slabs by slab_from ascending so Tier 1 always = lowest range, None/OPEN last
+    def _slab_sort_key(s):
+        val = s.slab_from
+        if val is None:
+            return float("inf")
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            return float("inf")
+
+    sorted_slabs = sorted(r.slabs, key=_slab_sort_key)
+
     return {
         "id": r.id,
         "upload_id": r.upload_id,
@@ -164,6 +176,7 @@ def serialize_commission_rule(r: CommissionRule, db: Session) -> Dict[str, Any]:
         "validation_status": r.validation_status,
         "warnings": r.warnings,
         "raw_json": r.raw_json,
-        "slabs": [_serialize_slab(s, is_age_slab=is_age_slab) for s in r.slabs],
+        "slabs": [_serialize_slab(s, is_age_slab=is_age_slab) for s in sorted_slabs],
         "_defaulted_fields": defaulted_fields,
     }
+

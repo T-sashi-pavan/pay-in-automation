@@ -39,14 +39,32 @@ def _make_rule(**overrides):
 
 def test_export_workbook_has_two_sheets_with_correct_row_split():
     non_slab_rule = _make_rule(id=1, commission_type="NON_SLAB")
-    slab_rule = _make_rule(id=2, commission_type="SLAB", slab_configuration=True, slabs=[_make_slab(), _make_slab(slab_from=41, slab_to=70, premium_type="TP", payin_od=None, payin_tp=25.0)])
+    slab_rule = _make_rule(id=2, commission_type="SLAB", slab_configuration=True, slabs=[
+        _make_slab(slab_from=0, slab_to=40),
+        _make_slab(slab_from=41, slab_to=70, premium_type="TP", payin_od=None, payin_tp=25.0),
+    ])
 
     buffer = build_export_workbook([non_slab_rule, slab_rule], db=None)
     wb = load_workbook(BytesIO(buffer.read()))
 
     assert wb.sheetnames == ["Non-Slab", "Slab"]
-    assert wb["Non-Slab"].max_row == 2  # header + 1 rule
-    assert wb["Slab"].max_row == 4      # 3 header rows + 1 rule row (with all slabs side-by-side as sub-columns)
+    assert wb["Non-Slab"].max_row == 2  # header + 1 non-slab rule
+
+    # New vertical layout: 1 header row + 1 row per slab tier of each rule.
+    # The slab_rule has 2 tiers → 1 header + 2 tier rows = max_row 3.
+    assert wb["Slab"].max_row == 3      # 1 header + 2 tier rows (one row per slab tier)
+
+    # Verify both tier rows carry slab data (slab-detail cols start at n_biz+1 = col 25)
+    ws_sl = wb["Slab"]
+    # Row 2 = tier 1 (slab_from=0, premium_type=OD)
+    # Row 3 = tier 2 (slab_from=41, premium_type=TP)
+    # Payin Slab From is the 3rd slab col → col 24+3 = 27
+    from backend.app.services.excel_export import BUSINESS_COLUMNS
+    slab_from_col = len(BUSINESS_COLUMNS) + 3  # Pay-In Type, Premium Type, then Payin Slab From
+    tier1_from = ws_sl.cell(row=2, column=slab_from_col).value
+    tier2_from = ws_sl.cell(row=3, column=slab_from_col).value
+    assert tier1_from == 0    # first tier (lowest slab_from after sort)
+    assert tier2_from == 41   # second tier
 
 
 def test_export_workbook_flags_defaulted_cells_in_purple():
