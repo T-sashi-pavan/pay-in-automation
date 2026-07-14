@@ -52,6 +52,7 @@ def on_startup():
     from backend.app.database.session import engine
     from sqlalchemy import text
     with engine.connect() as conn:
+        # 1. Ensure slab_details has conditional columns
         columns_to_add = [
             ("condition_field", "VARCHAR(255)"),
             ("operator", "VARCHAR(50)"),
@@ -64,7 +65,64 @@ def on_startup():
                 conn.commit()
                 logger.info(f"Added column {col_name} to slab_details successfully.")
             except Exception:
-                pass
+                # Column already exists or other error — rollback so the connection
+                # stays usable (critical for PostgreSQL which aborts on any error)
+                conn.rollback()
+
+        # 2. Upsert ALL Indian states so every deployment has them (safe to re-run)
+        ALL_STATES = {
+            "AP": "Andhra Pradesh", "AR": "Arunachal Pradesh", "AS": "Assam",
+            "BR": "Bihar", "CG": "Chhattisgarh", "CT": "Chhattisgarh",
+            "GA": "Goa", "GJ": "Gujarat", "HR": "Haryana",
+            "HP": "Himachal Pradesh", "JH": "Jharkhand", "JK": "Jammu and Kashmir",
+            "KA": "Karnataka", "KL": "Kerala", "LA": "Ladakh",
+            "LD": "Lakshadweep", "MP": "Madhya Pradesh", "MH": "Maharashtra",
+            "MN": "Manipur", "ML": "Meghalaya", "MZ": "Mizoram",
+            "NL": "Nagaland", "OD": "Odisha", "OR": "Odisha",
+            "PB": "Punjab", "RJ": "Rajasthan", "SK": "Sikkim",
+            "TN": "Tamil Nadu", "TG": "Telangana", "TS": "Telangana",
+            "TR": "Tripura", "UP": "Uttar Pradesh",
+            "UK": "Uttarakhand", "UA": "Uttarakhand", "UT": "Uttarakhand",
+            "WB": "West Bengal",
+            "AN": "Andaman and Nicobar Islands", "CH": "Chandigarh",
+            "DN": "Dadra and Nagar Haveli", "DD": "Daman and Diu",
+            "DL": "Delhi", "PY": "Puducherry",
+            "ALL": "All India",
+        }
+        try:
+            # Create table if missing (fresh installs before alembic)
+            conn.execute(text(
+                "CREATE TABLE IF NOT EXISTS master_states "
+                "(code VARCHAR(10) PRIMARY KEY, name VARCHAR(100) NOT NULL)"
+            ))
+            conn.commit()
+            db_dialect = engine.dialect.name
+            for code, name in ALL_STATES.items():
+                try:
+                    if db_dialect == "postgresql":
+                        conn.execute(text(
+                            "INSERT INTO master_states (code, name) VALUES (:c, :n) "
+                            "ON CONFLICT (code) DO NOTHING"
+                        ), {"c": code, "n": name})
+                    else:
+                        conn.execute(text(
+                            "INSERT OR IGNORE INTO master_states (code, name) VALUES (:c, :n)"
+                        ), {"c": code, "n": name})
+                except Exception:
+                    conn.rollback()
+            conn.commit()
+            logger.info("master_states upsert completed (%d states).", len(ALL_STATES))
+        except Exception as e:
+            logger.warning("Could not upsert master_states: %s", e)
+            conn.rollback()
+
+        # 3. Clear in-memory master-data cache so re-uploads pick up fresh state names
+        try:
+            from backend.app.services.master_data_service import clear_cache
+            clear_cache()
+        except Exception:
+            pass
+
 
 @app.get("/")
 def read_root():
