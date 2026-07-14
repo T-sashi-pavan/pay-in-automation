@@ -102,54 +102,65 @@ def build_export_workbook(rules: List[CommissionRule], db: Session) -> BytesIO:
     _autosize_columns(ws_ns)
 
     ws_sl = wb.create_sheet("Slab")
-    all_columns = [label for label, _ in BUSINESS_COLUMNS] + [label for label, _ in SLAB_TIER_COLUMNS]
+    
+    # 1. Pre-serialize slab rules to determine max slabs count
+    serialized_slab_rules = []
+    max_slabs = 0
+    for r in slab_rules:
+        data = serialize_commission_rule(r, db)
+        serialized_slab_rules.append(data)
+        slabs = data.get("slabs") or []
+        if len(slabs) > max_slabs:
+            max_slabs = len(slabs)
+            
+    # Guarantee at least 1 slab set of headers if there are no rules or max_slabs is 0
+    if max_slabs == 0:
+        max_slabs = 1
+
+    # 2. Build headers list
+    all_columns = [label for label, _ in BUSINESS_COLUMNS]
+    for i in range(1, max_slabs + 1):
+        for label, _ in SLAB_TIER_COLUMNS:
+            all_columns.append(f"{label} {i}")
+            
     ws_sl.append(all_columns)
     _style_header_row(ws_sl)
     business_col_count = len(BUSINESS_COLUMNS)
-    for rule in slab_rules:
-        data = serialize_commission_rule(rule, db)
+    tier_col_count = len(SLAB_TIER_COLUMNS)
+    
+    # 3. Write rules as single flat rows
+    for data in serialized_slab_rules:
         defaulted = set(data.get("_defaulted_fields") or [])
         business_values = [data.get(field) for _, field in BUSINESS_COLUMNS]
-
+        
+        row_values = business_values.copy()
         slabs = data.get("slabs") or []
-        if slabs:
-            first_slab = slabs[0]
-            first_slab_values = [first_slab.get(field) for _, field in SLAB_TIER_COLUMNS]
-            ws_sl.append(business_values + first_slab_values)
-            parent_row = ws_sl.max_row
-            
-            for col_idx, (_, field) in enumerate(BUSINESS_COLUMNS, start=1):
-                cell = ws_sl.cell(row=parent_row, column=col_idx)
-                cell.font = DEFAULTED_FONT if field in defaulted else PARENT_ROW_FONT
-                cell.fill = PARENT_ROW_FILL
+        for i in range(max_slabs):
+            if i < len(slabs):
+                slab = slabs[i]
+                slab_values = [slab.get(field) for _, field in SLAB_TIER_COLUMNS]
+                row_values.extend(slab_values)
+            else:
+                row_values.extend([None] * tier_col_count)
                 
-            first_slab_defaulted = set(first_slab.get("_defaulted_fields") or [])
-            for col_idx, (_, field) in enumerate(SLAB_TIER_COLUMNS, start=business_col_count + 1):
-                cell = ws_sl.cell(row=parent_row, column=col_idx)
-                cell.fill = PARENT_ROW_FILL
-                if field in first_slab_defaulted:
-                    cell.font = DEFAULTED_FONT
-
-            for slab in slabs[1:]:
+        ws_sl.append(row_values)
+        excel_row = ws_sl.max_row
+        
+        # Style business column cells if defaulted
+        for col_idx, (_, field) in enumerate(BUSINESS_COLUMNS, start=1):
+            if field in defaulted:
+                ws_sl.cell(row=excel_row, column=col_idx).font = DEFAULTED_FONT
+                
+        # Style slab columns cells if defaulted
+        for i in range(max_slabs):
+            if i < len(slabs):
+                slab = slabs[i]
                 slab_defaulted = set(slab.get("_defaulted_fields") or [])
-                tier_values = [None] * business_col_count + [slab.get(field) for _, field in SLAB_TIER_COLUMNS]
-                ws_sl.append(tier_values)
-                tier_row = ws_sl.max_row
-                ws_sl.row_dimensions[tier_row].outline_level = 1
-                for col_idx, (_, field) in enumerate(SLAB_TIER_COLUMNS, start=business_col_count + 1):
+                start_col = business_col_count + i * tier_col_count + 1
+                for col_idx, (_, field) in enumerate(SLAB_TIER_COLUMNS, start=start_col):
                     if field in slab_defaulted:
-                        ws_sl.cell(row=tier_row, column=col_idx).font = DEFAULTED_FONT
-        else:
-            ws_sl.append(business_values + [None] * len(SLAB_TIER_COLUMNS))
-            parent_row = ws_sl.max_row
-            for col_idx, (_, field) in enumerate(BUSINESS_COLUMNS, start=1):
-                cell = ws_sl.cell(row=parent_row, column=col_idx)
-                cell.font = DEFAULTED_FONT if field in defaulted else PARENT_ROW_FONT
-                cell.fill = PARENT_ROW_FILL
-            for col_idx in range(business_col_count + 1, business_col_count + len(SLAB_TIER_COLUMNS) + 1):
-                ws_sl.cell(row=parent_row, column=col_idx).fill = PARENT_ROW_FILL
+                        ws_sl.cell(row=excel_row, column=col_idx).font = DEFAULTED_FONT
 
-    ws_sl.sheet_properties.outlinePr.summaryBelow = False
     _autosize_columns(ws_sl)
 
     buffer = BytesIO()
