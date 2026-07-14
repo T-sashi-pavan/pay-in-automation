@@ -39,10 +39,6 @@ try:
 except ImportError:
     openai = None
 
-# On Windows, the Tesseract-OCR installer doesn't always add itself to PATH,
-# and pytesseract only looks on PATH by default. Auto-detect the common
-# install locations so OCR works right after installing, with no manual
-# PATH/env-var setup required.
 if pytesseract is not None and shutil.which("tesseract") is None:
     _WINDOWS_TESSERACT_CANDIDATES = [
         r"C:\Program Files\Tesseract-OCR\tesseract.exe",
@@ -54,56 +50,88 @@ if pytesseract is not None and shutil.which("tesseract") is None:
             pytesseract.pytesseract.tesseract_cmd = _candidate
             break
 
-# Default to the cheap/fast tier for every provider — vision-based table
-# extraction is a well-structured task these smaller models handle well, and
-# a shared/company API key shouldn't default to the most expensive option.
-# Override via env var to force a bigger model for a specific deployment.
 ANTHROPIC_VISION_MODEL = os.getenv("ANTHROPIC_VISION_MODEL", "claude-haiku-4-5-20251001")
 GEMINI_VISION_MODEL = os.getenv("GEMINI_VISION_MODEL", "gemini-2.5-flash")
 OPENAI_VISION_MODEL = os.getenv("OPENAI_VISION_MODEL", "gpt-4o-mini")
 
-# Cost-safety net: a company API key can be drained by an unexpectedly huge
-# scanned document. Caps how many pages per upload get sent to a paid vision
-# API — remaining scanned pages beyond this are skipped (not silently billed).
 PDF_VISION_MAX_PAGES = int(os.getenv("PDF_VISION_MAX_PAGES", "60"))
 
-LLM_EXTRACTION_PROMPT = """You are reading one page of a scanned insurance commission-grid document. \
-This application only tracks MOTOR DEPARTMENT (vehicle insurance) commission data — Two Wheeler, Private \
-Car, GCV/Commercial Vehicle, PCCV/Passenger Carrying Vehicle, Miscellaneous vehicle classes, etc. If this \
-page's table covers a DIFFERENT line of business (Marine, Fire, Engineering, Health, Life, Rewards/Incentives, \
-Liability, or any non-vehicle product), return an empty rows list — do not extract those rows.
+LLM_EXTRACTION_PROMPT = """You are reading one page of an insurance commission circular.
+This application only tracks the MOTOR DEPARTMENT (vehicle insurance) commission data. Ignore and completely skip any other departments (e.g., Health, Marine, Engineering, Fire, Life, Miscellaneous non-motor, etc.). If the page covers a non-motor department, return an empty rows list.
 
-Extract every commission-rule row visible in the table on this page.
+For motor department pages, convert natural language commission circular text and tables into structured CRM records.
 
-Typical columns: Sr No | Category of Vehicle | Type of Policy | Maximum Commission | Applicability of State \
-| Applicability of Class of Vehicle (the exact columns can vary page to page — use your best judgement based \
-on what is actually printed).
+SLAB CLASSIFICATION RULES:
+Determine the commission_type ('SLAB' or 'NON_SLAB') based on these rules:
+A record is SLAB only if commission changes based on any of these parameters:
+- Discount
+- Vehicle Age
+- IDV
+- Sum Insured
+- Premium Band
+- CC (Engine capacity)
+- GVW (Gross Vehicle Weight)
+- Threshold
+- Range
+- From / To / Upto / Above / Below / Greater than / Less than / >= / <= / Between / Increment
+Otherwise, classify as NON_SLAB.
 
-For each row, record the following fields:
-- sr_no: the row's serial number label (e.g. "1.a", "3.f"), or null if not shown.
-- category: the "Category of Vehicle" text.
-- policy_type: the "Type of Policy" text.
-- state: the state-applicability text, including any "except"/"excluding" clauses, or null if not shown.
-- class_of_vehicle: the class-of-vehicle applicability text, or null.
-- note: any other qualifying condition printed for this row (vehicle age, brand-new-only, etc.), or null.
-- is_slab: true only if the "Maximum Commission" cell contains MULTIPLE discount-percentage-based tiers \
-(e.g. "a) Discount upto 40%: 30% OD+90% TP; b) Discount 40-70%: 25% OD+85% TP; c) Discount >70%: 20% OD+80% TP").
-  - If true, fill "tiers": a list of {discount_from_pct, discount_to_pct, commission_od_pct, commission_tp_pct, \
-commission_net_pct}. Use null for discount_to_pct on the final open-ended tier (e.g. "exceeding 70%"). Each tier \
-should fill EITHER commission_od_pct/commission_tp_pct (when OD and TP get different rates) OR \
-commission_net_pct alone (when the tier states one flat rate "on Net Premium (OD+TP)") — never guess an OD/TP \
-split for a rate that was only ever stated as a single Net figure.
-  - If false, fill commission_od_pct / commission_tp_pct / commission_net_pct with whichever rate(s) actually \
-apply (e.g. "50% on Net Premium (OD+TP)" means both OD and TP get 50% via commission_net_pct=50; \
-"2.5% on TP premium" means only commission_tp_pct=2.5).
-
-If this page has no commission table at all (a cover page, terms & conditions, section divider, etc.), return an \
-empty rows list. Be exhaustive — transcribe every row on the page, not a sample. All percentages must be plain \
-numbers, not strings."""
+FIELD EXTRACTION RULES:
+- lob: Always "Motor". Ignore Health, Marine, Engineering etc.
+- insurer: Extract name of the insurer company (e.g. "Oriental", "United India", "National", "New India", "ICICI", "Go Digit", "Tata AIG", "Shriram", etc.).
+- product: If explicitly mentioned, store value; otherwise "ALL".
+- sub_product: Extract wherever available. If missing, "NA".
+- policy_type: Comprehensive, Standalone OD, Third Party, Package, Liability, etc. If absent, "ALL".
+- plan_type: Extract plan duration (e.g. 1+1, 1+3, 3+3, 5+5, etc.). If absent, "ALL".
+- file_type: Extract "New", "Renewal", "Rollover", etc. If absent, "ALL".
+- class: Extract vehicle class name (e.g. Private Car, Two Wheeler, Commercial Vehicle, etc.). If absent, "ALL".
+- sub_class: Extract subclass/segment details (e.g. GCV with GVW > 40000 Kg upto 50000 Kg). If absent, "ALL".
+- make: Extract manufacturer (e.g. Maruti, Tata, Hyundai, Mahindra, RE, Bajaj, Hero, Honda). Map to standard uppercase name (e.g., "MARUTI"), otherwise "ALL".
+- model: Extract vehicle model (e.g. Alto 800, Swift, Nexon, Activa, Splendor, Pulsar, Ace, Dost). If absent, "ALL".
+- fuel_type: Petrol, Diesel, Electric, CNG, etc. If absent, "ALL".
+- cpa: CPA status (YES, NO, or ALL). Set to YES if CPA is mentioned as included/with CPA; NO if excluded/without CPA.
+- ncb: NCB status (YES, NO, or ALL). Set to YES if NCB cases or NCB >20% is shown; NO if without NCB/no NCB.
+- vehicle_age: Vehicle age details (e.g. "Brand New", "0-5 years", "Age = 0", "Age >= 1"). If absent, "ALL".
+- partner_type: Channel name like POSP, MISP, Broker, OEM Dealer, etc. If absent, "All Partners".
+- state: Extract every state name or abbreviation (multiple allowed).
+- zone: Extract North, South, East, West, Central, etc. If absent, "ALL".
+- rto: Extract all RTO codes. If absent, "ALL".
+- source: Store the original source paragraph or heading where this rule resides.
+- remarks: Store any unmatched business restrictions, clauses, or footnotes. NEVER discard text.
+- commission_type: "SLAB" or "NON_SLAB" based on slab classification rules.
+- premium_type: Infer from commission text. Set to "OD" (if on OD premium), "TP" (if TP premium), or "NET" (if Net premium). Never assign all three unless explicitly stated.
+- payin_od: Commission OD percentage as a number (e.g. 15.0 or null).
+- payin_tp: Commission TP percentage as a number (e.g. 2.5 or null).
+- payin_net: Commission Net percentage as a number (e.g. 20.0 or null).
+- payout_od: Payout OD percentage as a number if explicitly stated, otherwise null.
+- payout_tp: Payout TP percentage as a number if explicitly stated, otherwise null.
+- payout_net: Payout Net percentage as a number if explicitly stated, otherwise null.
+- payin_reward: Commission Reward percentage if explicitly stated, otherwise null.
+- payout_reward: Payout Reward percentage if explicitly stated, otherwise null.
+- payin_scheme: Commission Scheme percentage if explicitly stated, otherwise null.
+- payout_scheme: Payout Scheme percentage if explicitly stated, otherwise null.
+- explanation: Store the original source paragraph/text (e.g. "Discount upto 30% -> 20% on OD Premium -> 50% on TP Premium") to help users verify extraction.
+- slabs: If commission_type is SLAB, return the array of slab tiers. Otherwise, return an empty array or null.
+  Each slab tier object must contain:
+  - payin_type: "PERCENTAGE" or "FLAT".
+  - premium_type: "OD", "TP", or "NET" (inferred from commission text).
+  - slab_from: Slab start limit (number or string, e.g. 0 or ">30"). Do NOT invent ranges. Keep the original business meaning.
+  - slab_to: Slab end limit (number or string, e.g. 30 or "OPEN").
+  - payin_od: OD rate for this slab tier (number or null).
+  - payin_tp: TP rate for this slab tier (number or null).
+  - payin_net: Net rate for this slab tier (number or null).
+  - payout_od: Payout OD rate if explicitly stated (number or null).
+  - payout_tp: Payout TP rate if explicitly stated (number or null).
+  - payout_net: Payout Net rate if explicitly stated (number or null).
+  - condition_field: The field name the slab is based on (e.g. "Discount", "Vehicle Age", "GVW", "CC", "IDV").
+  - operator: Comparison operator (e.g. ">", "<=", "=", "between", or null).
+  - value: The boundary value if single, or null.
+  - original_text: The original text representing this slab tier (e.g. "Discount upto 30%").
+"""
 
 EXTRACTION_TOOL_SCHEMA = {
     "name": "extract_commission_rows",
-    "description": "Record every commission-rule row read from this page's table.",
+    "description": "Record every commission-rule row read from this page.",
     "input_schema": {
         "type": "object",
         "properties": {
@@ -112,111 +140,213 @@ EXTRACTION_TOOL_SCHEMA = {
                 "items": {
                     "type": "object",
                     "properties": {
-                        "sr_no": {"type": ["string", "null"]},
-                        "category": {"type": ["string", "null"]},
-                        "policy_type": {"type": ["string", "null"]},
-                        "state": {"type": ["string", "null"]},
-                        "class_of_vehicle": {"type": ["string", "null"]},
-                        "note": {"type": ["string", "null"]},
-                        "is_slab": {"type": "boolean"},
-                        "commission_od_pct": {"type": ["number", "null"]},
-                        "commission_tp_pct": {"type": ["number", "null"]},
-                        "commission_net_pct": {"type": ["number", "null"]},
-                        "tiers": {
+                        "lob": {"type": "string"},
+                        "insurer": {"type": "string"},
+                        "product": {"type": "string"},
+                        "sub_product": {"type": "string"},
+                        "policy_type": {"type": "string"},
+                        "plan_type": {"type": "string"},
+                        "file_type": {"type": "string"},
+                        "class": {"type": "string"},
+                        "sub_class": {"type": "string"},
+                        "make": {"type": "string"},
+                        "model": {"type": "string"},
+                        "fuel_type": {"type": "string"},
+                        "cpa": {"type": "string"},
+                        "ncb": {"type": "string"},
+                        "vehicle_age": {"type": "string"},
+                        "partner_type": {"type": "string"},
+                        "state": {"type": "string"},
+                        "zone": {"type": "string"},
+                        "rto": {"type": "string"},
+                        "source": {"type": "string"},
+                        "remarks": {"type": "string"},
+                        "commission_type": {"type": "string", "enum": ["SLAB", "NON_SLAB"]},
+                        "premium_type": {"type": "string", "enum": ["OD", "TP", "NET"]},
+                        "payin_od": {"type": ["number", "null"]},
+                        "payin_tp": {"type": ["number", "null"]},
+                        "payin_net": {"type": ["number", "null"]},
+                        "payout_od": {"type": ["number", "null"]},
+                        "payout_tp": {"type": ["number", "null"]},
+                        "payout_net": {"type": ["number", "null"]},
+                        "payin_reward": {"type": ["number", "null"]},
+                        "payout_reward": {"type": ["number", "null"]},
+                        "payin_scheme": {"type": ["number", "null"]},
+                        "payout_scheme": {"type": ["number", "null"]},
+                        "explanation": {"type": "string"},
+                        "slabs": {
                             "type": ["array", "null"],
                             "items": {
                                 "type": "object",
                                 "properties": {
-                                    "discount_from_pct": {"type": ["number", "null"]},
-                                    "discount_to_pct": {"type": ["number", "null"]},
-                                    "commission_od_pct": {"type": ["number", "null"]},
-                                    "commission_tp_pct": {"type": ["number", "null"]},
-                                    "commission_net_pct": {"type": ["number", "null"]},
-                                },
-                                "required": ["discount_from_pct", "discount_to_pct"],
-                            },
-                        },
+                                    "payin_type": {"type": "string"},
+                                    "premium_type": {"type": "string", "enum": ["OD", "TP", "NET"]},
+                                    "slab_from": {"type": ["string", "number", "null"]},
+                                    "slab_to": {"type": ["string", "number", "null"]},
+                                    "payin_od": {"type": ["number", "null"]},
+                                    "payin_tp": {"type": ["number", "null"]},
+                                    "payin_net": {"type": ["number", "null"]},
+                                    "payout_od": {"type": ["number", "null"]},
+                                    "payout_tp": {"type": ["number", "null"]},
+                                    "payout_net": {"type": ["number", "null"]},
+                                    "condition_field": {"type": ["string", "null"]},
+                                    "operator": {"type": ["string", "null"]},
+                                    "value": {"type": ["number", "null"]},
+                                    "original_text": {"type": ["string", "null"]}
+                                }
+                            }
+                        }
                     },
-                    "required": ["is_slab"],
-                },
+                    "required": ["lob", "commission_type"]
+                }
             }
         },
-        "required": ["rows"],
-    },
+        "required": ["rows"]
+    }
 }
 
 if genai_types is not None:
-    _GEMINI_TIER_SCHEMA = genai_types.Schema(
+    _GEMINI_SLAB_SCHEMA = genai_types.Schema(
         type=genai_types.Type.OBJECT,
         properties={
-            "discount_from_pct": genai_types.Schema(type=genai_types.Type.NUMBER, nullable=True),
-            "discount_to_pct": genai_types.Schema(type=genai_types.Type.NUMBER, nullable=True),
-            "commission_od_pct": genai_types.Schema(type=genai_types.Type.NUMBER, nullable=True),
-            "commission_tp_pct": genai_types.Schema(type=genai_types.Type.NUMBER, nullable=True),
-            "commission_net_pct": genai_types.Schema(type=genai_types.Type.NUMBER, nullable=True),
-        },
+            "payin_type": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
+            "premium_type": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
+            "slab_from": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
+            "slab_to": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
+            "payin_od": genai_types.Schema(type=genai_types.Type.NUMBER, nullable=True),
+            "payin_tp": genai_types.Schema(type=genai_types.Type.NUMBER, nullable=True),
+            "payin_net": genai_types.Schema(type=genai_types.Type.NUMBER, nullable=True),
+            "payout_od": genai_types.Schema(type=genai_types.Type.NUMBER, nullable=True),
+            "payout_tp": genai_types.Schema(type=genai_types.Type.NUMBER, nullable=True),
+            "payout_net": genai_types.Schema(type=genai_types.Type.NUMBER, nullable=True),
+            "condition_field": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
+            "operator": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
+            "value": genai_types.Schema(type=genai_types.Type.NUMBER, nullable=True),
+            "original_text": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
+        }
     )
     _GEMINI_ROW_SCHEMA = genai_types.Schema(
         type=genai_types.Type.OBJECT,
         properties={
-            "sr_no": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
-            "category": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
+            "lob": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
+            "insurer": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
+            "product": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
+            "sub_product": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
             "policy_type": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
+            "plan_type": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
+            "file_type": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
+            "class": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
+            "sub_class": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
+            "make": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
+            "model": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
+            "fuel_type": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
+            "cpa": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
+            "ncb": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
+            "vehicle_age": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
+            "partner_type": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
             "state": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
-            "class_of_vehicle": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
-            "note": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
-            "is_slab": genai_types.Schema(type=genai_types.Type.BOOLEAN),
-            "commission_od_pct": genai_types.Schema(type=genai_types.Type.NUMBER, nullable=True),
-            "commission_tp_pct": genai_types.Schema(type=genai_types.Type.NUMBER, nullable=True),
-            "commission_net_pct": genai_types.Schema(type=genai_types.Type.NUMBER, nullable=True),
-            "tiers": genai_types.Schema(type=genai_types.Type.ARRAY, items=_GEMINI_TIER_SCHEMA, nullable=True),
-        },
-        required=["is_slab"],
+            "zone": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
+            "rto": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
+            "source": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
+            "remarks": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
+            "commission_type": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
+            "premium_type": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
+            "payin_od": genai_types.Schema(type=genai_types.Type.NUMBER, nullable=True),
+            "payin_tp": genai_types.Schema(type=genai_types.Type.NUMBER, nullable=True),
+            "payin_net": genai_types.Schema(type=genai_types.Type.NUMBER, nullable=True),
+            "payout_od": genai_types.Schema(type=genai_types.Type.NUMBER, nullable=True),
+            "payout_tp": genai_types.Schema(type=genai_types.Type.NUMBER, nullable=True),
+            "payout_net": genai_types.Schema(type=genai_types.Type.NUMBER, nullable=True),
+            "payin_reward": genai_types.Schema(type=genai_types.Type.NUMBER, nullable=True),
+            "payout_reward": genai_types.Schema(type=genai_types.Type.NUMBER, nullable=True),
+            "payin_scheme": genai_types.Schema(type=genai_types.Type.NUMBER, nullable=True),
+            "payout_scheme": genai_types.Schema(type=genai_types.Type.NUMBER, nullable=True),
+            "explanation": genai_types.Schema(type=genai_types.Type.STRING, nullable=True),
+            "slabs": genai_types.Schema(type=genai_types.Type.ARRAY, items=_GEMINI_SLAB_SCHEMA, nullable=True),
+        }
     )
     GEMINI_RESPONSE_SCHEMA = genai_types.Schema(
         type=genai_types.Type.OBJECT,
         properties={"rows": genai_types.Schema(type=genai_types.Type.ARRAY, items=_GEMINI_ROW_SCHEMA)},
-        required=["rows"],
+        required=["rows"]
     )
 else:
     GEMINI_RESPONSE_SCHEMA = None
 
-# OpenAI Structured Outputs (strict mode) requires every object to set
-# additionalProperties: false and list every property (including nullable
-# ones) in "required" — nullability is expressed via a ["type", "null"] union.
-_OPENAI_TIER_SCHEMA = {
+_OPENAI_SLAB_SCHEMA = {
     "type": "object",
     "properties": {
-        "discount_from_pct": {"type": ["number", "null"]},
-        "discount_to_pct": {"type": ["number", "null"]},
-        "commission_od_pct": {"type": ["number", "null"]},
-        "commission_tp_pct": {"type": ["number", "null"]},
-        "commission_net_pct": {"type": ["number", "null"]},
+        "payin_type": {"type": ["string", "null"]},
+        "premium_type": {"type": ["string", "null"]},
+        "slab_from": {"type": ["string", "number", "null"]},
+        "slab_to": {"type": ["string", "number", "null"]},
+        "payin_od": {"type": ["number", "null"]},
+        "payin_tp": {"type": ["number", "null"]},
+        "payin_net": {"type": ["number", "null"]},
+        "payout_od": {"type": ["number", "null"]},
+        "payout_tp": {"type": ["number", "null"]},
+        "payout_net": {"type": ["number", "null"]},
+        "condition_field": {"type": ["string", "null"]},
+        "operator": {"type": ["string", "null"]},
+        "value": {"type": ["number", "null"]},
+        "original_text": {"type": ["string", "null"]}
     },
-    "required": ["discount_from_pct", "discount_to_pct", "commission_od_pct", "commission_tp_pct", "commission_net_pct"],
-    "additionalProperties": False,
+    "required": [
+        "payin_type", "premium_type", "slab_from", "slab_to", "payin_od", "payin_tp", "payin_net",
+        "payout_od", "payout_tp", "payout_net", "condition_field", "operator", "value", "original_text"
+    ],
+    "additionalProperties": False
 }
+
 _OPENAI_ROW_SCHEMA = {
     "type": "object",
     "properties": {
-        "sr_no": {"type": ["string", "null"]},
-        "category": {"type": ["string", "null"]},
+        "lob": {"type": ["string", "null"]},
+        "insurer": {"type": ["string", "null"]},
+        "product": {"type": ["string", "null"]},
+        "sub_product": {"type": ["string", "null"]},
         "policy_type": {"type": ["string", "null"]},
+        "plan_type": {"type": ["string", "null"]},
+        "file_type": {"type": ["string", "null"]},
+        "class": {"type": ["string", "null"]},
+        "sub_class": {"type": ["string", "null"]},
+        "make": {"type": ["string", "null"]},
+        "model": {"type": ["string", "null"]},
+        "fuel_type": {"type": ["string", "null"]},
+        "cpa": {"type": ["string", "null"]},
+        "ncb": {"type": ["string", "null"]},
+        "vehicle_age": {"type": ["string", "null"]},
+        "partner_type": {"type": ["string", "null"]},
         "state": {"type": ["string", "null"]},
-        "class_of_vehicle": {"type": ["string", "null"]},
-        "note": {"type": ["string", "null"]},
-        "is_slab": {"type": "boolean"},
-        "commission_od_pct": {"type": ["number", "null"]},
-        "commission_tp_pct": {"type": ["number", "null"]},
-        "commission_net_pct": {"type": ["number", "null"]},
-        "tiers": {"type": ["array", "null"], "items": _OPENAI_TIER_SCHEMA},
+        "zone": {"type": ["string", "null"]},
+        "rto": {"type": ["string", "null"]},
+        "source": {"type": ["string", "null"]},
+        "remarks": {"type": ["string", "null"]},
+        "commission_type": {"type": ["string", "null"]},
+        "premium_type": {"type": ["string", "null"]},
+        "payin_od": {"type": ["number", "null"]},
+        "payin_tp": {"type": ["number", "null"]},
+        "payin_net": {"type": ["number", "null"]},
+        "payout_od": {"type": ["number", "null"]},
+        "payout_tp": {"type": ["number", "null"]},
+        "payout_net": {"type": ["number", "null"]},
+        "payin_reward": {"type": ["number", "null"]},
+        "payout_reward": {"type": ["number", "null"]},
+        "payin_scheme": {"type": ["number", "null"]},
+        "payout_scheme": {"type": ["number", "null"]},
+        "explanation": {"type": ["string", "null"]},
+        "slabs": {"type": ["array", "null"], "items": _OPENAI_SLAB_SCHEMA}
     },
     "required": [
-        "sr_no", "category", "policy_type", "state", "class_of_vehicle", "note", "is_slab",
-        "commission_od_pct", "commission_tp_pct", "commission_net_pct", "tiers",
+        "lob", "insurer", "product", "sub_product", "policy_type", "plan_type", "file_type",
+        "class", "sub_class", "make", "model", "fuel_type", "cpa", "ncb", "vehicle_age",
+        "partner_type", "state", "zone", "rto", "source", "remarks", "commission_type",
+        "premium_type", "payin_od", "payin_tp", "payin_net", "payout_od", "payout_tp", "payout_net",
+        "payin_reward", "payout_reward", "payin_scheme", "payout_scheme", "explanation", "slabs"
     ],
-    "additionalProperties": False,
+    "additionalProperties": False
 }
+
 OPENAI_RESPONSE_SCHEMA = {
     "name": "extract_commission_rows",
     "strict": True,
@@ -231,28 +361,7 @@ OPENAI_RESPONSE_SCHEMA = {
 
 class PdfParserService:
     """
-    Parses commission-grid tables out of a PDF.
-
-    - Text-based PDFs are read directly via pdfplumber's native table extraction.
-    - Scanned/rasterized PDFs (no extractable text) are read by a vision-capable
-      LLM that looks at the rendered page image the same way a person would —
-      this is what actually works for irregular, multi-shape scanned tables,
-      unlike traditional OCR. Tried in order: Anthropic (ANTHROPIC_API_KEY),
-      OpenAI (OPENAI_API_KEY), Gemini (GEMINI_API_KEY / GOOGLE_API_KEY) —
-      whichever is configured first is used for the whole document.
-    - If no key is configured, scanned pages fall back to a best-effort
-      PyMuPDF-render + pytesseract-OCR + column-position heuristic, which is
-      far less reliable (no semantic understanding of table structure) but
-      requires no API key/cost.
-    - Every vision API call's token usage is logged per page and totalled at
-      the end (cost control for a shared/company API key), and no more than
-      PDF_VISION_MAX_PAGES pages per upload are ever sent to a paid API.
-
-    Every path emits the same flat "one row = one rule" shape (either routed
-    through ExcelParserService.parse_table for the pdfplumber/OCR paths, or
-    built directly for the LLM-vision path since the model already returns
-    semantically-structured rows), so all three feed the same
-    normalization/merge pipeline downstream.
+    Parses commission-grid tables out of a PDF using LLM.
     """
 
     def __init__(self):
@@ -288,35 +397,26 @@ class PdfParserService:
                 page_num = page_idx + 1
                 text = page.extract_text() or ""
 
-                if text.strip():
-                    tables = page.extract_tables() or []
-                    if not tables:
-                        continue
-                    for t_idx, table in enumerate(tables):
-                        rows = [[(c or "").strip() for c in row] for row in table if any(row)]
-                        if len(rows) < 2:
-                            continue
-                        headers, data_rows = rows[0], rows[1:]
-                        sheet_name = f"Page {page_num} Table {t_idx + 1}"
-                        count = self.excel_parser.parse_table(
-                            headers, data_rows, sheet_name, filename, company, existing_keys, all_parsed_rules
-                        )
-                        print(f"  [TABLE COMPLETED] Extracted {count} rules from '{sheet_name}'.")
-                else:
-                    # Scanned page — no extractable text at all. Prefer LLM vision
-                    # (reliable); fall back to the Tesseract heuristic only if no
-                    # API key is configured, the page cap is hit, or the call errors.
-                    if usage["pages_sent"] >= PDF_VISION_MAX_PAGES:
-                        usage["pages_capped"] += 1
-                        print(f"  [COST GUARD] Page {page_num} skipped — reached PDF_VISION_MAX_PAGES={PDF_VISION_MAX_PAGES} for this upload.")
-                    else:
-                        llm_count = self._llm_vision_extract_page(
-                            file_bytes, page_idx, filename, company, existing_keys, all_parsed_rules, usage
-                        )
-                        if llm_count >= 0:
-                            print(f"  [TABLE COMPLETED] Extracted {llm_count} rules from Page {page_num} via {usage['provider']} vision.")
-                            continue
+                if usage["pages_sent"] >= PDF_VISION_MAX_PAGES:
+                    usage["pages_capped"] += 1
+                    print(f"  [COST GUARD] Page {page_num} skipped — reached PDF_VISION_MAX_PAGES={PDF_VISION_MAX_PAGES} for this upload.")
+                    continue
 
+                count = -1
+                if text.strip():
+                    count = self._llm_text_extract_page(
+                        text, page_idx, filename, company, existing_keys, all_parsed_rules, usage
+                    )
+                    if count >= 0:
+                        print(f"  [TABLE COMPLETED] Extracted {count} rules from Page {page_num} via text LLM.")
+                        continue
+
+                count = self._llm_vision_extract_page(
+                    file_bytes, page_idx, filename, company, existing_keys, all_parsed_rules, usage
+                )
+                if count >= 0:
+                    print(f"  [TABLE COMPLETED] Extracted {count} rules from Page {page_num} via vision LLM.")
+                else:
                     ocr_table = self._ocr_page_table(file_bytes, page_idx)
                     if not ocr_table or len(ocr_table) < 2:
                         print(f"  [PAGE SKIP] Page {page_num} is scanned and OCR could not reconstruct a table.")
@@ -333,17 +433,14 @@ class PdfParserService:
         final_rules = [r for r in final_rules if not is_rule_effectively_empty(r)]
         dropped = before - len(final_rules)
         if dropped:
-            print(f"  [DATA QUALITY] Dropped {dropped} rule(s) with no usable data (likely OCR column-misread).")
+            print(f"  [DATA QUALITY] Dropped {dropped} rule(s) with no usable data.")
 
         if usage["pages_sent"] > 0:
             print(
-                f"\n[LLM VISION USAGE] provider={usage['provider']} | pages_sent={usage['pages_sent']} "
-                f"| errors={usage['errors']} | pages_capped_by_PDF_VISION_MAX_PAGES={usage['pages_capped']}\n"
+                f"\n[LLM USAGE] provider={usage['provider']} | pages_sent={usage['pages_sent']} "
+                f"| errors={usage['errors']} | pages_capped={usage['pages_capped']}\n"
                 f"  input_tokens={usage['input_tokens']:,} | output_tokens={usage['output_tokens']:,} "
                 f"| total_tokens={usage['total_tokens']:,}\n"
-                f"  NOTE: this is per-call token usage from the API response, not your account's remaining "
-                f"balance/quota — no chat-completion API exposes remaining credit; check that on the "
-                f"provider's billing dashboard (console.anthropic.com / platform.openai.com / aistudio.google.com)."
             )
 
         print(f"[PDF PARSING COMPLETED] Grouped {len(all_parsed_rules)} rules into {len(final_rules)} merged rules.")
@@ -360,21 +457,25 @@ class PdfParserService:
             print(f"  [LLM VISION ERROR] Page {page_idx + 1} render failed: {e}")
             return None
 
+    def _llm_text_extract_page(
+        self, text_content: str, page_idx: int, filename: Optional[str], company: str,
+        existing_keys: set, all_parsed_rules: List[Dict[str, Any]], usage: Dict[str, Any]
+    ) -> int:
+        if anthropic is not None and os.getenv("ANTHROPIC_API_KEY"):
+            return self._anthropic_text_extract_page(text_content, page_idx, filename, company, existing_keys, all_parsed_rules, usage)
+
+        if openai is not None and os.getenv("OPENAI_API_KEY"):
+            return self._openai_text_extract_page(text_content, page_idx, filename, company, existing_keys, all_parsed_rules, usage)
+
+        if genai is not None and (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")):
+            return self._gemini_text_extract_page(text_content, page_idx, filename, company, existing_keys, all_parsed_rules, usage)
+
+        return -1
+
     def _llm_vision_extract_page(
         self, file_bytes: bytes, page_idx: int, filename: Optional[str], company: str,
         existing_keys: set, all_parsed_rules: List[Dict[str, Any]], usage: Dict[str, Any]
     ) -> int:
-        """
-        Renders the page to an image and asks a vision-capable LLM to read it
-        directly, the same way a person visually reads a scanned table — this is
-        what actually handles irregular/multi-shape scanned layouts that defeat a
-        pure OCR + column-position heuristic. Tries Anthropic, then OpenAI, then
-        Gemini, using whichever API key is actually configured (first match wins
-        for the whole document, so usage isn't split across providers). Returns
-        -1 (not a real count) if no provider is available or the call errored,
-        signalling the caller to fall back to the Tesseract heuristic instead.
-        `usage` is mutated in place with running token counts for this upload.
-        """
         if anthropic is not None and os.getenv("ANTHROPIC_API_KEY"):
             return self._anthropic_vision_extract_page(file_bytes, page_idx, filename, company, existing_keys, all_parsed_rules, usage)
 
@@ -393,7 +494,6 @@ class PdfParserService:
         png_bytes = self._render_page_png(file_bytes, page_idx)
         if png_bytes is None:
             return -1
-
         try:
             client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
             response = client.messages.create(
@@ -412,14 +512,39 @@ class PdfParserService:
             self._record_usage(usage, "anthropic", page_idx + 1, response.usage.input_tokens, response.usage.output_tokens)
             tool_use = next((b for b in response.content if b.type == "tool_use"), None)
             if tool_use is None:
-                print(f"  [LLM VISION] Page {page_idx + 1}: Claude returned no structured result.")
                 return 0
             rows = tool_use.input.get("rows", [])
         except Exception as e:
             usage["errors"] += 1
             print(f"  [LLM VISION ERROR] Page {page_idx + 1} (Claude): {e}")
             return -1
+        return self._append_llm_rows(rows, company, filename, page_idx + 1, existing_keys, all_parsed_rules)
 
+    def _anthropic_text_extract_page(
+        self, text_content: str, page_idx: int, filename: Optional[str], company: str,
+        existing_keys: set, all_parsed_rules: List[Dict[str, Any]], usage: Dict[str, Any]
+    ) -> int:
+        try:
+            client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+            response = client.messages.create(
+                model=ANTHROPIC_VISION_MODEL,
+                max_tokens=8192,
+                tools=[EXTRACTION_TOOL_SCHEMA],
+                tool_choice={"type": "tool", "name": "extract_commission_rows"},
+                messages=[{
+                    "role": "user",
+                    "content": f"{LLM_EXTRACTION_PROMPT}\n\nHere is the raw text extracted from page {page_idx + 1}:\n{text_content}",
+                }],
+            )
+            self._record_usage(usage, "anthropic", page_idx + 1, response.usage.input_tokens, response.usage.output_tokens)
+            tool_use = next((b for b in response.content if b.type == "tool_use"), None)
+            if tool_use is None:
+                return 0
+            rows = tool_use.input.get("rows", [])
+        except Exception as e:
+            usage["errors"] += 1
+            print(f"  [LLM TEXT ERROR] Page {page_idx + 1} (Claude): {e}")
+            return -1
         return self._append_llm_rows(rows, company, filename, page_idx + 1, existing_keys, all_parsed_rules)
 
     def _openai_vision_extract_page(
@@ -429,7 +554,6 @@ class PdfParserService:
         png_bytes = self._render_page_png(file_bytes, page_idx)
         if png_bytes is None:
             return -1
-
         try:
             client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
             response = client.chat.completions.create(
@@ -452,7 +576,31 @@ class PdfParserService:
             usage["errors"] += 1
             print(f"  [LLM VISION ERROR] Page {page_idx + 1} (OpenAI): {e}")
             return -1
+        return self._append_llm_rows(rows, company, filename, page_idx + 1, existing_keys, all_parsed_rules)
 
+    def _openai_text_extract_page(
+        self, text_content: str, page_idx: int, filename: Optional[str], company: str,
+        existing_keys: set, all_parsed_rules: List[Dict[str, Any]], usage: Dict[str, Any]
+    ) -> int:
+        try:
+            client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            response = client.chat.completions.create(
+                model=OPENAI_VISION_MODEL,
+                max_tokens=8192,
+                response_format={"type": "json_schema", "json_schema": OPENAI_RESPONSE_SCHEMA},
+                messages=[{
+                    "role": "user",
+                    "content": f"{LLM_EXTRACTION_PROMPT}\n\nHere is the raw text extracted from page {page_idx + 1}:\n{text_content}",
+                }],
+            )
+            self._record_usage(usage, "openai", page_idx + 1, response.usage.prompt_tokens, response.usage.completion_tokens)
+            content = response.choices[0].message.content
+            data = json.loads(content) if content else {}
+            rows = data.get("rows", [])
+        except Exception as e:
+            usage["errors"] += 1
+            print(f"  [LLM TEXT ERROR] Page {page_idx + 1} (OpenAI): {e}")
+            return -1
         return self._append_llm_rows(rows, company, filename, page_idx + 1, existing_keys, all_parsed_rules)
 
     def _gemini_vision_extract_page(
@@ -462,7 +610,6 @@ class PdfParserService:
         png_bytes = self._render_page_png(file_bytes, page_idx)
         if png_bytes is None:
             return -1
-
         try:
             api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
             client = genai.Client(api_key=api_key)
@@ -485,7 +632,33 @@ class PdfParserService:
             usage["errors"] += 1
             print(f"  [LLM VISION ERROR] Page {page_idx + 1} (Gemini): {e}")
             return -1
+        return self._append_llm_rows(rows, company, filename, page_idx + 1, existing_keys, all_parsed_rules)
 
+    def _gemini_text_extract_page(
+        self, text_content: str, page_idx: int, filename: Optional[str], company: str,
+        existing_keys: set, all_parsed_rules: List[Dict[str, Any]], usage: Dict[str, Any]
+    ) -> int:
+        try:
+            api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+            client = genai.Client(api_key=api_key)
+            response = client.models.generate_content(
+                model=GEMINI_VISION_MODEL,
+                contents=[
+                    f"{LLM_EXTRACTION_PROMPT}\n\nHere is the raw text extracted from page {page_idx + 1}:\n{text_content}"
+                ],
+                config=genai_types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=GEMINI_RESPONSE_SCHEMA,
+                ),
+            )
+            um = response.usage_metadata
+            self._record_usage(usage, "gemini", page_idx + 1, um.prompt_token_count or 0, um.candidates_token_count or 0)
+            data = json.loads(response.text)
+            rows = data.get("rows", [])
+        except Exception as e:
+            usage["errors"] += 1
+            print(f"  [LLM TEXT ERROR] Page {page_idx + 1} (Gemini): {e}")
+            return -1
         return self._append_llm_rows(rows, company, filename, page_idx + 1, existing_keys, all_parsed_rules)
 
     def _record_usage(self, usage: Dict[str, Any], provider: str, page_num: int, input_tokens: int, output_tokens: int) -> None:
@@ -512,62 +685,117 @@ class PdfParserService:
         self, row: Dict[str, Any], company: str, filename: Optional[str], page_num: int, existing_keys: set
     ) -> Optional[Dict[str, Any]]:
         """Converts one LLM-extracted row into the same rule-dict shape the Excel/Word parsers emit."""
-        sr_no = row.get("sr_no")
-        category = row.get("category")
-        policy_type = row.get("policy_type")
-        state_raw = row.get("state")
-        class_of_vehicle = row.get("class_of_vehicle")
-        note = row.get("note")
+        
+        # Verify LOB
+        lob = row.get("lob")
+        if lob and str(lob).strip().lower() != "motor":
+            # Skip non-Motor rules
+            return None
 
-        remarks = " | ".join(filter(None, [
-            f"Sr {sr_no}" if sr_no else None,
-            note,
-            f"(LLM vision extraction — {filename or 'PDF'} p.{page_num})",
-        ]))
+        # Resolve field values
+        insurer_name = row.get("insurer") or company
+        product = row.get("product") or "ALL"
+        sub_product = row.get("sub_product") or "NA"
+        policy_type = row.get("policy_type") or "ALL"
+        plan_type = row.get("plan_type") or "ALL"
+        file_type = row.get("file_type") or "ALL"
+        class_val = row.get("class") or "ALL"
+        sub_class = row.get("sub_class") or "ALL"
+        make = row.get("make") or "ALL"
+        model = row.get("model") or "ALL"
+        fuel_type = row.get("fuel_type") or "ALL"
+        cpa = row.get("cpa") or "ALL"
+        ncb = row.get("ncb") or "ALL"
+        zone = row.get("zone") or "ALL"
+        rto = row.get("rto") or "ALL"
+        source = row.get("source") or "ALL"
+        remarks = row.get("remarks") or "ALL"
+
+        state_raw = row.get("state")
+        normalized_state = self.normalizer.normalize_states(state_raw) if state_raw else None
+
+        # Resolve vehicle age ranges
+        age_from, age_to = self.normalizer.normalize_vehicle_age(row.get("vehicle_age"))
+
+        # Payins
+        payin_od = row.get("payin_od")
+        payin_tp = row.get("payin_tp")
+        payin_net = row.get("payin_net")
+        payin_reward = row.get("payin_reward")
+        payin_scheme = row.get("payin_scheme")
+
+        # Payouts
+        payout_od = row.get("payout_od")
+        payout_tp = row.get("payout_tp")
+        payout_net = row.get("payout_net")
+        payout_reward = row.get("payout_reward")
+        payout_scheme = row.get("payout_scheme")
+
+        # Default payouts to 80% of payin if missing
+        if payout_od is None and payin_od is not None:
+            payout_od = round(payin_od * 0.8, 6)
+        if payout_tp is None and payin_tp is not None:
+            payout_tp = round(payin_tp * 0.8, 6)
+        if payout_net is None and payin_net is not None:
+            payout_net = round(payin_net * 0.8, 6)
+        if payout_reward is None and payin_reward is not None:
+            payout_reward = round(payin_reward * 0.8, 6)
+        if payout_scheme is None and payin_scheme is not None:
+            payout_scheme = round(payin_scheme * 0.8, 6)
 
         rule_data: Dict[str, Any] = {
-            "sheet_name": f"Page {page_num} (LLM Vision)",
+            "sheet_name": f"Page {page_num} (LLM)",
             "lob": "Motor",
-            "file_type": None,
-            "insurance_company": company,
-            "product": class_of_vehicle,
+            "file_type": file_type,
+            "insurance_company": insurer_name,
+            "product": product,
             "policy_type": policy_type,
-            "plan_type": None,
-            "sub_product": None,
-            "class_": None,
-            "sub_class": category,
-            "make": None,
-            "model": None,
-            "fuel_type": None,
-            "body_type": None,
-            "vehicle_age_from": None,
-            "vehicle_age_to": None,
-            "cpa_status": None,
-            "ncb_status": None,
-            "partner_type": None,
-            "state": self.normalizer.normalize_states(state_raw) if state_raw else None,
-            "zone": None,
-            "source": None,
-            "rto": None,
+            "plan_type": plan_type,
+            "sub_product": sub_product,
+            "class_": class_val,
+            "sub_class": sub_class,
+            "make": make,
+            "model": model,
+            "fuel_type": fuel_type,
+            "body_type": "ALL",
+            "vehicle_age_from": age_from,
+            "vehicle_age_to": age_to,
+            "cpa_status": cpa,
+            "ncb_status": ncb,
+            "partner_type": row.get("partner_type") or "All Partners",
+            "state": normalized_state,
+            "zone": zone,
+            "source": source,
+            "rto": rto,
             "effective_date": date.today(),
-            "remarks": remarks or None,
+            "remarks": remarks,
         }
 
+        # Validate
         status, warnings = RuleValidator.validate_rule(rule_data, existing_keys)
+        
+        # Add explanation panel text under Validation Warnings
+        explanation = row.get("explanation")
+        if explanation:
+            warnings.append(f"Source Rule: {explanation}")
+
         rule_data["validation_status"] = status
         rule_data["warnings"] = warnings
-        rule_data["raw_json"] = {
-            "sr_no": sr_no, "category": category, "policy_type": policy_type,
-            "state": state_raw, "class_of_vehicle": class_of_vehicle, "note": note,
-        }
+        rule_data["raw_json"] = row
 
-        if row.get("is_slab") and row.get("tiers"):
+        # Handle slabs
+        is_slab = (row.get("commission_type") == "SLAB")
+        if is_slab:
             rule_data["commission_type"] = "SLAB"
             rule_data["slab_configuration"] = True
+            
+            # Reset direct rule rate fields
             for f in ("payin_od", "payout_od", "payin_tp", "payout_tp", "payin_net", "payout_net",
                       "payin_reward", "payout_reward", "payin_scheme", "payout_scheme"):
                 rule_data[f] = None
-            rule_data["slabs"] = self._tiers_to_slabs(row["tiers"])
+                
+            rule_data["slabs"] = self._tiers_to_slabs(row.get("slabs") or [])
+            
             dup_warnings = check_duplicate_slab_ranges(rule_data["slabs"])
             if dup_warnings:
                 rule_data["warnings"] = list(rule_data["warnings"]) + dup_warnings
@@ -575,16 +803,16 @@ class PdfParserService:
         else:
             rule_data["commission_type"] = "NON_SLAB"
             rule_data["slab_configuration"] = False
-            rule_data["payin_od"] = row.get("commission_od_pct")
-            rule_data["payout_od"] = None
-            rule_data["payin_tp"] = row.get("commission_tp_pct")
-            rule_data["payout_tp"] = None
-            rule_data["payin_net"] = row.get("commission_net_pct")
-            rule_data["payout_net"] = None
-            rule_data["payin_reward"] = None
-            rule_data["payout_reward"] = None
-            rule_data["payin_scheme"] = None
-            rule_data["payout_scheme"] = None
+            rule_data["payin_od"] = payin_od
+            rule_data["payout_od"] = payout_od
+            rule_data["payin_tp"] = payin_tp
+            rule_data["payout_tp"] = payout_tp
+            rule_data["payin_net"] = payin_net
+            rule_data["payout_net"] = payout_net
+            rule_data["payin_reward"] = payin_reward
+            rule_data["payout_reward"] = payout_reward
+            rule_data["payin_scheme"] = payin_scheme
+            rule_data["payout_scheme"] = payout_scheme
             rule_data["slabs"] = []
 
         return rule_data
@@ -592,43 +820,80 @@ class PdfParserService:
     def _tiers_to_slabs(self, tiers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Converts LLM-extracted discount-percentage tiers into SlabDetail dicts,
-        matching the established one-rate-bucket-per-row convention used by every
-        real Excel-sourced slab (premium_type is always exactly one of OD/TP/NET,
-        never a combined or made-up label like "DISCOUNT %"). A tier stating both
-        an OD and a TP rate (e.g. "30% OD + 90% TP") becomes TWO slab rows sharing
-        the same slab_from/slab_to boundary, one per rate bucket.
-
-        Boundaries are also normalized to be non-overlapping: adjacent tiers whose
-        upper/lower bounds touch (e.g. (0,40),(40,70)) get the next tier's lower
-        bound bumped to upper+1, since discount bands in the source documents are
-        always whole-number percentages — this reads as a real duplicate/overlap
-        to anyone scanning the table otherwise, even though it's technically just
-        an exclusive-vs-inclusive boundary convention.
+        supporting both the old discount_from_pct format and the new slab_from format.
         """
         normalized = []
         prev_to = None
         for t in tiers:
             frm = t.get("discount_from_pct")
+            if frm is None:
+                frm = t.get("slab_from")
             to = t.get("discount_to_pct")
+            if to is None:
+                to = t.get("slab_to")
+                
+            # If bounds touch, bump the lower limit of the next tier
             if prev_to is not None and frm is not None and frm == prev_to:
-                frm = frm + 1
-            normalized.append({**t, "discount_from_pct": frm, "discount_to_pct": to})
+                try:
+                    frm = float(frm) + 1
+                except (ValueError, TypeError):
+                    pass
+            
+            normalized.append({**t, "_resolved_from": frm, "_resolved_to": to})
             prev_to = to if to is not None else prev_to
 
         slabs = []
         for t in normalized:
-            slab_from = t.get("discount_from_pct")
-            slab_to = t.get("discount_to_pct")
+            slab_from = t.get("_resolved_from")
+            slab_to = t.get("_resolved_to")
+            
+            # Try to convert numeric bounds to float
+            try:
+                if slab_from is not None:
+                    slab_from = float(str(slab_from).replace("%", "").strip())
+            except ValueError:
+                pass
+            try:
+                if slab_to is not None:
+                    if str(slab_to).strip().upper() == "OPEN":
+                        slab_to = None
+                    else:
+                        slab_to = float(str(slab_to).replace("%", "").strip())
+            except ValueError:
+                pass
+
+            od_val = t.get("commission_od_pct")
+            if od_val is None:
+                od_val = t.get("payin_od")
+                
+            tp_val = t.get("commission_tp_pct")
+            if tp_val is None:
+                tp_val = t.get("payin_tp")
+                
+            net_val = t.get("commission_net_pct")
+            if net_val is None:
+                net_val = t.get("payin_net")
+
             rate_buckets = (
-                ("OD", "payin_od", t.get("commission_od_pct")),
-                ("TP", "payin_tp", t.get("commission_tp_pct")),
-                ("NET", "payin_net", t.get("commission_net_pct")),
+                ("OD", "payin_od", od_val),
+                ("TP", "payin_tp", tp_val),
+                ("NET", "payin_net", net_val),
             )
             for premium_type, payin_field, value in rate_buckets:
                 if value is None:
                     continue
+                
+                # Check for explicit payout values or default to 80%
+                payout_field = "payout_" + premium_type.lower()
+                payout_val = t.get(payout_field)
+                if payout_val is None:
+                    try:
+                        payout_val = round(float(value) * 0.8, 6) if value is not None else None
+                    except (ValueError, TypeError):
+                        payout_val = None
+
                 slab = {
-                    "payin_type": "PERCENTAGE",
+                    "payin_type": t.get("payin_type") or "PERCENTAGE",
                     "premium_type": premium_type,
                     "slab_from": slab_from,
                     "slab_to": slab_to,
@@ -638,21 +903,17 @@ class PdfParserService:
                     "payout_tp": None,
                     "payin_net": None,
                     "payout_net": None,
+                    "condition_field": t.get("condition_field"),
+                    "operator": t.get("operator"),
+                    "value": t.get("value"),
+                    "original_text": t.get("original_text")
                 }
                 slab[payin_field] = value
+                slab[payout_field] = payout_val
                 slabs.append(slab)
         return slabs
 
     def _ocr_page_table(self, file_bytes: bytes, page_idx: int) -> Optional[List[List[str]]]:
-        """
-        Best-effort table reconstruction from a scanned page: renders the page to an
-        image via PyMuPDF, OCRs it with pytesseract, groups recognized words into
-        lines (tesseract's own block/paragraph/line grouping), then assigns each
-        word to a column by nearest x-position to the header line's word starts.
-        Requires the system Tesseract-OCR binary to be installed — not just the
-        pytesseract pip package (see requirements.txt note / deployment follow-up).
-        This is only used as a fallback when no ANTHROPIC_API_KEY is configured.
-        """
         if fitz is None or pytesseract is None or Image is None:
             print("  [OCR SKIP] pytesseract/PyMuPDF not available in this environment.")
             return None
@@ -685,8 +946,6 @@ class PdfParserService:
 
         ordered_lines = sorted(lines.values(), key=lambda words: min(w["top"] for w in words))
 
-        # Use the first line as the header row to establish column boundaries —
-        # words within 40px of each other merge into a single (multi-word) column header.
         header_words = sorted(ordered_lines[0], key=lambda w: w["left"])
         columns: List[Dict[str, Any]] = []
         for w in header_words:
