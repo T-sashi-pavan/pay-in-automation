@@ -46,7 +46,7 @@ def test_export_workbook_has_two_sheets_with_correct_row_split():
 
     assert wb.sheetnames == ["Non-Slab", "Slab"]
     assert wb["Non-Slab"].max_row == 2  # header + 1 rule
-    assert wb["Slab"].max_row == 2      # header + 1 rule row (with all slabs side-by-side as sub-columns)
+    assert wb["Slab"].max_row == 4      # 3 header rows + 1 rule row (with all slabs side-by-side as sub-columns)
 
 
 def test_export_workbook_flags_defaulted_cells_in_purple():
