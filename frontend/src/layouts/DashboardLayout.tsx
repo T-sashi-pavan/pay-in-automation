@@ -2,16 +2,16 @@ import React, { useState } from 'react';
 import {
   LayoutDashboard,
   UploadCloud,
-  // Sliders, — unused while "Organise the Data" is hidden from nav; re-import when restoring it.
   ChevronLeft,
   ChevronRight,
   Layers,
+  Zap,
 } from 'lucide-react';
 import { useSidebar } from '../contexts/SidebarContext';
 
 interface DashboardLayoutProps {
-  activeTab: 'dashboard' | 'upload' | 'customise';
-  onTabChange: (tab: 'dashboard' | 'upload' | 'customise') => void;
+  activeTab: 'dashboard' | 'upload' | 'customise' | 'automation';
+  onTabChange: (tab: 'dashboard' | 'upload' | 'customise' | 'automation') => void;
   children: React.ReactNode;
 }
 
@@ -37,8 +37,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ activeTab, onT
   const navItems = [
     { id: 'dashboard' as const, label: 'Dashboard', icon: LayoutDashboard },
     { id: 'upload' as const, label: 'Upload Files', icon: UploadCloud },
-    // "Organise the Data" temporarily hidden from nav — re-add this entry to restore it.
-    // { id: 'customise' as const, label: 'Organise the Data', icon: Sliders },
+    { id: 'automation' as const, label: 'Automation', icon: Zap },
   ];
 
   const sidebarWidth = collapsed ? COLLAPSED_WIDTH : EXPANDED_WIDTH;

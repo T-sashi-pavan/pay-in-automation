@@ -186,4 +186,24 @@ export const api = {
     a.remove();
     URL.revokeObjectURL(objUrl);
   },
+
+  getAutomationUploads: async (): Promise<any[]> => {
+    const response = await apiClient.get('/automation/uploads');
+    return response.data;
+  },
+
+  getValidRows: async (id: number): Promise<any> => {
+    const response = await apiClient.get(`/automation/uploads/${id}/valid-rows`);
+    return response.data;
+  },
+
+  getUniqueValues: async (id: number): Promise<any> => {
+    const response = await apiClient.get(`/automation/uploads/${id}/unique-values`);
+    return response.data;
+  },
+
+  runAutomation: async (payload: { upload_id: number; frontend_url: string }): Promise<any> => {
+    const response = await apiClient.post('/automation/run', payload);
+    return response.data;
+  },
 };

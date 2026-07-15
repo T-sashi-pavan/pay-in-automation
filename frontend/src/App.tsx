@@ -5,13 +5,22 @@ import { DashboardLayout } from './layouts/DashboardLayout';
 import { Dashboard } from './pages/Dashboard';
 import { CustomiseData } from './pages/CustomiseData';
 import { DashboardHome } from './pages/DashboardHome';
+import { Automation } from './pages/Automation';
+import { MockCRM } from './pages/MockCRM';
 import { useNotification } from './contexts/NotificationContext';
+
+const getInitialTab = (): 'dashboard' | 'upload' | 'customise' | 'automation' => {
+  const path = window.location.pathname.replace(/^\//, '');
+  if (path === 'automation') return 'automation';
+  if (path === 'dashboard') return 'dashboard';
+  if (path === 'customise') return 'customise';
+  return 'upload';
+};
 
 function App() {
   const queryClient = useQueryClient();
   const { notify } = useNotification();
-  // Nav shows Dashboard first, but the app still lands on Upload Files by default.
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'upload' | 'customise'>('upload');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'upload' | 'customise' | 'automation'>(getInitialTab);
   const [selectedUploadId, setSelectedUploadId] = useState<number | null>(null);
   const [page, setPage] = useState(1);
 
@@ -195,10 +204,27 @@ function App() {
     notify('Dashboard refreshed successfully.', 'success');
   };
 
+  const handleTabChange = (tab: 'dashboard' | 'upload' | 'customise' | 'automation') => {
+    setActiveTab(tab);
+    window.history.pushState(null, '', '/' + (tab === 'upload' ? '' : tab));
+  };
+
+  useEffect(() => {
+    const handlePopState = () => {
+      setActiveTab(getInitialTab());
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  if (window.location.pathname === '/mock-crm') {
+    return <MockCRM />;
+  }
+
   return (
     <>
       {/* DashboardLayout now only handles sidebar + top nav */}
-      <DashboardLayout activeTab={activeTab} onTabChange={setActiveTab}>
+      <DashboardLayout activeTab={activeTab} onTabChange={handleTabChange}>
         {activeTab === 'dashboard' ? (
           <DashboardHome />
         ) : activeTab === 'upload' ? (
@@ -225,6 +251,8 @@ function App() {
             onUploadFile={handleUploadFile}
             isUploading={uploadMutation.isPending}
           />
+        ) : activeTab === 'automation' ? (
+          <Automation />
         ) : (
           <CustomiseData />
         )}

@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.app.api.uploads import router as uploads_router
 from backend.app.api.rule_edit import router as rule_edit_router
 from backend.app.api.master_data import router as master_data_router
+from backend.app.api.automation import router as automation_router
 
 # Setup logging configuration
 logging.basicConfig(
@@ -46,6 +47,7 @@ app.add_middleware(
 app.include_router(uploads_router)
 app.include_router(rule_edit_router)
 app.include_router(master_data_router)
+app.include_router(automation_router)
 
 @app.on_event("startup")
 def on_startup():
