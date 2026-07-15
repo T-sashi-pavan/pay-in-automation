@@ -39,6 +39,7 @@ export const Automation: React.FC = () => {
   const [activeScreenshot, setActiveScreenshot] = useState<string>('non_slab_filled');
   const [playwrightResult, setPlaywrightResult] = useState<any>(null);
   const [executionTime, setExecutionTime] = useState<string>('0s');
+  const [showSubmittedBanner, setShowSubmittedBanner] = useState(false);
 
   // Fetch uploads for automation
   const { data: uploads = [], isLoading } = useQuery<AutomationUpload[]>({
@@ -93,6 +94,48 @@ export const Automation: React.FC = () => {
   const handleCloseModal = () => {
     setIsModalOpen(false);
     setSelectedUpload(null);
+    if (automationStep === 'completed') {
+      setShowSubmittedBanner(true);
+    }
+  };
+
+  const renderSimulatedSelect = (
+    label: string,
+    name: string,
+    currentVal: string,
+    placeholder: string,
+    options: string[]
+  ) => {
+    const isActive = currentFillingField === name;
+    return (
+      <div className="relative">
+        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">{label}</label>
+        <select 
+          disabled 
+          className={`w-full h-7 px-2 rounded border text-[11px] bg-white dark:bg-slate-800 text-slate-850 dark:text-slate-200 cursor-not-allowed transition-all
+            ${isActive ? 'border-[#4F46E5] ring-2 ring-indigo-500/10' : 'border-slate-200 dark:border-slate-800'}`}
+        >
+          <option value="">{currentVal || placeholder}</option>
+        </select>
+        
+        {/* Visual Dropdown Opening Menu Simulation */}
+        {isActive && (
+          <div className="absolute left-0 right-0 top-full mt-0.5 bg-white dark:bg-slate-900 border border-[#4F46E5] rounded-md shadow-2xl z-50 py-1 text-slate-850 dark:text-slate-100 max-h-32 overflow-y-auto text-[10px] animate-in fade-in slide-in-from-top-1">
+            {options.map((opt, idx) => {
+              const isSelected = currentVal === opt;
+              return (
+                <div 
+                  key={idx} 
+                  className={`px-2.5 py-1 text-left transition-colors duration-150 ${isSelected ? 'bg-[#4F46E5] text-white font-bold' : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'}`}
+                >
+                  {opt}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
   };
 
   const startAutomationFlow = async () => {
@@ -207,8 +250,20 @@ export const Automation: React.FC = () => {
 
       for (const field of fields) {
         setCurrentFillingField(field.name);
-        await sleep(400); // visual typing speed
+        // Step 1: Open simulated dropdown by sleeping 200ms
+        await sleep(200);
+        
+        // Step 2: Set field choice and wait 300ms (Total 500ms/half-second per field!)
         setSimulatedForm((prev: Record<string, any>) => ({ ...prev, [field.name]: field.val }));
+        await sleep(300);
+
+        // Auto-scroll modal container to the bottom as rates or slabs are filled
+        if (['payin_od', 'payin_tp', 'payin_net', 'payout_od', 'slabsList'].includes(field.name)) {
+          const container = document.getElementById('modal-scroll-container');
+          if (container) {
+            container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+          }
+        }
       }
       setCurrentFillingField(null);
     };
@@ -261,15 +316,32 @@ export const Automation: React.FC = () => {
     setExecutionTime(`${((Date.now() - startTime) / 1000).toFixed(1)}s`);
     setAutomationStep('completed');
     notify('Form Submitted Successfully!', 'success');
-
-    // Auto close modal dialog after 2.5s for seamless UX
-    setTimeout(() => {
-      handleCloseModal();
-    }, 2500);
   };
 
   return (
     <div className="space-y-6">
+      {showSubmittedBanner && (
+        <div className="bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-250 dark:border-emerald-800/40 rounded-lg p-3.5 flex items-center justify-between transition-all duration-300 animate-in fade-in slide-in-from-top-2">
+          <div className="flex items-center gap-2">
+            <CheckCircle className="w-5 h-5 text-emerald-500" />
+            <div>
+              <p className="text-xs font-bold text-emerald-800 dark:text-emerald-300">
+                Form Submitted successfully to Broker CRM sandbox!
+              </p>
+              <p className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-0.5">
+                The Playwright automated synchronization continues processing in the background.
+              </p>
+            </div>
+          </div>
+          <button 
+            onClick={() => setShowSubmittedBanner(false)}
+            className="text-emerald-500 hover:text-emerald-700 dark:text-emerald-450 dark:hover:text-emerald-300 transition-colors p-1"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Page Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -444,7 +516,7 @@ export const Automation: React.FC = () => {
             )}
 
             {/* Modal Body Area */}
-            <div className="flex-1 overflow-y-auto p-6 flex flex-col md:flex-row gap-6">
+            <div id="modal-scroll-container" className="flex-1 overflow-y-auto p-6 flex flex-col md:flex-row gap-6">
               
               {/* Left Panel: CRM Form Entry (Visualizer) - Compact styling */}
               <div className={`flex-1 space-y-4 ${activeTab === 'playwright' ? 'hidden md:block' : ''}`}>
@@ -457,102 +529,113 @@ export const Automation: React.FC = () => {
                         <option value="Motor">Motor</option>
                       </select>
                     </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">File Type</label>
-                      <select disabled className={`w-full h-7 px-2 rounded border text-[11px] bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 cursor-not-allowed transition-all
-                        ${currentFillingField === 'file_type' ? 'border-[#4F46E5] ring-2 ring-indigo-500/10' : 'border-slate-200 dark:border-slate-800'}`}>
-                        <option value="">{simulatedForm.file_type || 'Select File Type'}</option>
-                      </select>
-                    </div>
+
+                    {renderSimulatedSelect(
+                      'File Type',
+                      'file_type',
+                      simulatedForm.file_type,
+                      'Select File Type',
+                      ['ALL', 'New', 'RollOver', 'Break-in']
+                    )}
+
                     <div>
                       <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Insurance Company</label>
-                      <select disabled className="w-full h-7 px-2 rounded border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-600 dark:text-slate-400 cursor-not-allowed">
+                      <select disabled className="w-full h-7 px-2 rounded border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-650 dark:text-slate-400 cursor-not-allowed">
                         <option value="">{simulatedForm.insurance_company || selectedUpload.company || 'Select Insurer'}</option>
                       </select>
                     </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Product</label>
-                      <select disabled className={`w-full h-7 px-2 rounded border text-[11px] bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 cursor-not-allowed transition-all
-                        ${currentFillingField === 'product' ? 'border-[#4F46E5] ring-2 ring-indigo-500/10' : 'border-slate-200 dark:border-slate-800'}`}>
-                        <option value="">{simulatedForm.product || 'Select Product'}</option>
-                      </select>
-                    </div>
+
+                    {renderSimulatedSelect(
+                      'Product',
+                      'product',
+                      simulatedForm.product,
+                      'Select Product',
+                      ['ALL', 'GCV3', 'Private Car', 'Two Wheeler', '1_GCCV_3W']
+                    )}
 
                     {/* Row 2 */}
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Policy Type</label>
-                      <select disabled className={`w-full h-7 px-2 rounded border text-[11px] bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 cursor-not-allowed transition-all
-                        ${currentFillingField === 'policy_type' ? 'border-[#4F46E5] ring-2 ring-indigo-500/10' : 'border-slate-200 dark:border-slate-800'}`}>
-                        <option value="">{simulatedForm.policy_type || 'Select Policy Type'}</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Plan Type</label>
-                      <select disabled className={`w-full h-7 px-2 rounded border text-[11px] bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 cursor-not-allowed transition-all
-                        ${currentFillingField === 'plan_type' ? 'border-[#4F46E5] ring-2 ring-indigo-500/10' : 'border-slate-200 dark:border-slate-800'}`}>
-                        <option value="">{simulatedForm.plan_type || 'Select Plan Type'}</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Sub-Product</label>
-                      <select disabled className={`w-full h-7 px-2 rounded border text-[11px] bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-205 cursor-not-allowed transition-all
-                        ${currentFillingField === 'sub_product' ? 'border-[#4F46E5] ring-2 ring-indigo-500/10' : 'border-slate-200 dark:border-slate-800'}`}>
-                        <option value="">{simulatedForm.sub_product || 'Select Sub-Product'}</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Class</label>
-                      <select disabled className={`w-full h-7 px-2 rounded border text-[11px] bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-205 cursor-not-allowed transition-all
-                        ${currentFillingField === 'class_' ? 'border-[#4F46E5] ring-2 ring-indigo-500/10' : 'border-slate-200 dark:border-slate-800'}`}>
-                        <option value="">{simulatedForm.class_ || 'Select Class'}</option>
-                      </select>
-                    </div>
+                    {renderSimulatedSelect(
+                      'Policy Type',
+                      'policy_type',
+                      simulatedForm.policy_type,
+                      'Select Policy Type',
+                      ['ALL', 'Comprehensive', 'Third Party', 'Own Damage']
+                    )}
+
+                    {renderSimulatedSelect(
+                      'Plan Type',
+                      'plan_type',
+                      simulatedForm.plan_type,
+                      'Select Plan Type',
+                      ['ALL', '1 Yr OD + 1 Yr TP', '1 Yr TP', '3 Yr OD + 3 Yr TP']
+                    )}
+
+                    {renderSimulatedSelect(
+                      'Sub-Product',
+                      'sub_product',
+                      simulatedForm.sub_product,
+                      'Select Sub-Product',
+                      ['ALL', 'Commercial Vehicle', 'NA', 'PC-Package']
+                    )}
+
+                    {renderSimulatedSelect(
+                      'Class',
+                      'class_',
+                      simulatedForm.class_,
+                      'Select Class',
+                      ['ALL', 'Class A', 'Class B', 'NA']
+                    )}
 
                     {/* Row 3 */}
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Sub-Class</label>
-                      <select disabled className={`w-full h-7 px-2 rounded border text-[11px] bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-205 cursor-not-allowed transition-all
-                        ${currentFillingField === 'sub_class' ? 'border-[#4F46E5] ring-2 ring-indigo-500/10' : 'border-slate-200 dark:border-slate-800'}`}>
-                        <option value="">{simulatedForm.sub_class || 'Select Sub-Class'}</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Make</label>
-                      <select disabled className={`w-full h-7 px-2 rounded border text-[11px] bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 cursor-not-allowed transition-all
-                        ${currentFillingField === 'make' ? 'border-[#4F46E5] ring-2 ring-indigo-500/10' : 'border-slate-200 dark:border-slate-800'}`}>
-                        <option value="">{simulatedForm.make || 'Select Make'}</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Model</label>
-                      <select disabled className={`w-full h-7 px-2 rounded border text-[11px] bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 cursor-not-allowed transition-all
-                        ${currentFillingField === 'model' ? 'border-[#4F46E5] ring-2 ring-indigo-500/10' : 'border-slate-200 dark:border-slate-800'}`}>
-                        <option value="">{simulatedForm.model || 'Select Model'}</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Fuel Type</label>
-                      <select disabled className={`w-full h-7 px-2 rounded border text-[11px] bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 cursor-not-allowed transition-all
-                        ${currentFillingField === 'fuel_type' ? 'border-[#4F46E5] ring-2 ring-indigo-500/10' : 'border-slate-200 dark:border-slate-800'}`}>
-                        <option value="">{simulatedForm.fuel_type || 'Select Fuel Type'}</option>
-                      </select>
-                    </div>
+                    {renderSimulatedSelect(
+                      'Sub-Class',
+                      'sub_class',
+                      simulatedForm.sub_class,
+                      'Select Sub-Class',
+                      ['ALL', 'SubClass C', 'NA']
+                    )}
+
+                    {renderSimulatedSelect(
+                      'Make',
+                      'make',
+                      simulatedForm.make,
+                      'Select Make',
+                      ['ALL', 'Maruti Suzuki', 'Hyundai', 'Tata Motors']
+                    )}
+
+                    {renderSimulatedSelect(
+                      'Model',
+                      'model',
+                      simulatedForm.model,
+                      'Select Model',
+                      ['ALL', 'Swift', 'i20', 'Nexon']
+                    )}
+
+                    {renderSimulatedSelect(
+                      'Fuel Type',
+                      'fuel_type',
+                      simulatedForm.fuel_type,
+                      'Select Fuel Type',
+                      ['ALL', 'Petrol', 'Diesel', 'CNG', 'Electric']
+                    )}
 
                     {/* Row 4 */}
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">CPA Status</label>
-                      <select disabled className={`w-full h-7 px-2 rounded border text-[11px] bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-202 cursor-not-allowed transition-all
-                        ${currentFillingField === 'cpa_status' ? 'border-[#4F46E5] ring-2 ring-indigo-500/10' : 'border-slate-200 dark:border-slate-800'}`}>
-                        <option value="">{simulatedForm.cpa_status || 'Select CPA Status'}</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">NCB Status</label>
-                      <select disabled className={`w-full h-7 px-2 rounded border text-[11px] bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-202 cursor-not-allowed transition-all
-                        ${currentFillingField === 'ncb_status' ? 'border-[#4F46E5] ring-2 ring-indigo-500/10' : 'border-slate-200 dark:border-slate-800'}`}>
-                        <option value="">{simulatedForm.ncb_status || 'Select NCB Status'}</option>
-                      </select>
-                    </div>
+                    {renderSimulatedSelect(
+                      'CPA Status',
+                      'cpa_status',
+                      simulatedForm.cpa_status,
+                      'Select CPA Status',
+                      ['ALL', 'Yes', 'No']
+                    )}
+
+                    {renderSimulatedSelect(
+                      'NCB Status',
+                      'ncb_status',
+                      simulatedForm.ncb_status,
+                      'Select NCB Status',
+                      ['ALL', 'Yes', 'No', '0%', '20%', '50%']
+                    )}
+
                     <div>
                       <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Vehicle Age From</label>
                       <input type="text" readOnly value={simulatedForm.vehicle_age_from || ''} placeholder="0" className={`w-full h-7 px-2 rounded border text-[11px] bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:outline-none transition-all
@@ -571,27 +654,30 @@ export const Automation: React.FC = () => {
                         <option value="">{simulatedForm.slab_type === 'SLAB' ? 'Slab' : 'Non-Slab'}</option>
                       </select>
                     </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Source</label>
-                      <select disabled className={`w-full h-7 px-2 rounded border text-[11px] bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 cursor-not-allowed transition-all
-                        ${currentFillingField === 'source' ? 'border-[#4F46E5] ring-2 ring-indigo-500/10' : 'border-slate-200 dark:border-slate-800'}`}>
-                        <option value="">{simulatedForm.source || 'Select Source'}</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Zone</label>
-                      <select disabled className={`w-full h-7 px-2 rounded border text-[11px] bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 cursor-not-allowed transition-all
-                        ${currentFillingField === 'zone' ? 'border-[#4F46E5] ring-2 ring-indigo-500/10' : 'border-slate-200 dark:border-slate-800'}`}>
-                        <option value="">{simulatedForm.zone || 'Select Zone'}</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">RTO</label>
-                      <select disabled className={`w-full h-7 px-2 rounded border text-[11px] bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 cursor-not-allowed transition-all
-                        ${currentFillingField === 'rto' ? 'border-[#4F46E5] ring-2 ring-indigo-500/10' : 'border-slate-200 dark:border-slate-800'}`}>
-                        <option value="">{simulatedForm.rto || 'Select RTO'}</option>
-                      </select>
-                    </div>
+
+                    {renderSimulatedSelect(
+                      'Source',
+                      'source',
+                      simulatedForm.source,
+                      'Select Source',
+                      ['ALL', 'Online', 'Offline', 'Partner Portal']
+                    )}
+
+                    {renderSimulatedSelect(
+                      'Zone',
+                      'zone',
+                      simulatedForm.zone,
+                      'Select Zone',
+                      ['ALL', 'Zone A', 'Zone B', 'Zone C']
+                    )}
+
+                    {renderSimulatedSelect(
+                      'RTO',
+                      'rto',
+                      simulatedForm.rto,
+                      'Select RTO',
+                      ['ALL', 'AP-01', 'TS-09', 'DL-01', 'MH-02']
+                    )}
 
                     {/* Row 6 */}
                     <div className="sm:col-span-2">
