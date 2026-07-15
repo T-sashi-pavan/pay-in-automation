@@ -4,7 +4,7 @@ import type { UploadHistory, ExtractedRecordsResponse, CommissionRule, MasterLis
 // In production this must be set as a build-time env var (VITE_API_BASE_URL)
 // pointing at the deployed backend, e.g. "https://payin-backend.onrender.com/api" —
 // Vite only reads VITE_-prefixed vars, and bakes them in at build time, not runtime.
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api';
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,

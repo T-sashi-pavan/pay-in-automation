@@ -15,14 +15,19 @@ def run_playwright_simulation(frontend_url: str, non_slab_rule: dict, slab_rule:
     logger.info(f"[PLAYWRIGHT] Starting simulation targeting {frontend_url}")
     screenshots = {}
     
+    # Normalise frontend URL to use 127.0.0.1 instead of localhost to prevent IPv6 DNS refusals on Windows
+    normalized_frontend_url = frontend_url.replace("localhost", "127.0.0.1")
+    
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(viewport={"width": 1280, "height": 800})
         page = context.new_page()
+        page.set_default_timeout(2500) # Fail fast if elements don't appear (2.5 seconds)
         
         try:
             # STEP 1: Fill Non-Slab Rule
-            target_url = f"{frontend_url.rstrip('/')}/mock-crm"
+            upload_id = (non_slab_rule.get("upload_id") if non_slab_rule else None) or (slab_rule.get("upload_id") if slab_rule else None)
+            target_url = f"{normalized_frontend_url.rstrip('/')}/mock-crm?upload_id={upload_id}"
             logger.info(f"[PLAYWRIGHT] Navigating to {target_url}")
             page.goto(target_url)
             page.wait_for_selector("#crm-entry-form")
@@ -72,6 +77,10 @@ def run_playwright_simulation(frontend_url: str, non_slab_rule: dict, slab_rule:
                 try:
                     el = page.locator(selector)
                     if el.count() > 0:
+                        # Skip filling disabled/read-only inputs in CRM form
+                        if el.is_disabled():
+                            logger.info(f"[PLAYWRIGHT] Skipping disabled selector: {selector}")
+                            continue
                         tag_name = page.eval_on_selector(selector, "el => el.tagName")
                         if tag_name == "SELECT":
                             page.select_option(selector, value=val)
@@ -136,6 +145,9 @@ def run_playwright_simulation(frontend_url: str, non_slab_rule: dict, slab_rule:
                     try:
                         el = page.locator(selector)
                         if el.count() > 0:
+                            if el.is_disabled():
+                                logger.info(f"[PLAYWRIGHT] Skipping disabled selector: {selector}")
+                                continue
                             tag_name = page.eval_on_selector(selector, "el => el.tagName")
                             if tag_name == "SELECT":
                                 page.select_option(selector, value=val)
