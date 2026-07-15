@@ -101,6 +101,37 @@ function App() {
   // Reset page on filter/upload change
   useEffect(() => { setPage(1); }, [filters, selectedUploadId]);
 
+  // Track status transition for notifications and refetching
+  const [prevStatuses, setPrevStatuses] = useState<Record<number, string>>({});
+
+  useEffect(() => {
+    if (uploads.length > 0) {
+      uploads.forEach((u) => {
+        const prevStatus = prevStatuses[u.id];
+        if (prevStatus === 'PROCESSING' && u.status === 'COMPLETED') {
+          if (u.id === selectedUploadId) {
+            queryClient.invalidateQueries({ queryKey: ['records', u.id] });
+            queryClient.invalidateQueries({ queryKey: ['filterOptions'] });
+          }
+          notify(
+            `Successfully processed "${u.filename}" — extracted ${u.total_records.toLocaleString()} commission rules.`,
+            'success'
+          );
+        } else if (prevStatus === 'PROCESSING' && u.status === 'FAILED') {
+          notify(`Failed to process "${u.filename}". Please check the file format.`, 'error');
+        }
+      });
+
+      const nextStatuses: Record<number, string> = {};
+      uploads.forEach((u) => {
+        nextStatuses[u.id] = u.status;
+      });
+      if (JSON.stringify(nextStatuses) !== JSON.stringify(prevStatuses)) {
+        setPrevStatuses(nextStatuses);
+      }
+    }
+  }, [uploads, selectedUploadId, prevStatuses, queryClient, notify]);
+
   // Upload mutation
   const uploadMutation = useMutation({
     mutationFn: api.uploadFile,
@@ -111,8 +142,8 @@ function App() {
       setActiveTab('upload');
       setPage(1);
       notify(
-        `Successfully processed grid — extracted ${data.total_records.toLocaleString()} commission rules.`,
-        'success'
+        'File uploaded successfully. Detecting and extracting rules...',
+        'info'
       );
     },
     onError: (err: any) => {
