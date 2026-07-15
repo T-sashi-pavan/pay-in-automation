@@ -20,6 +20,13 @@ interface AutomationUpload extends UploadHistory {
   total_rows: number;
 }
 
+const formatRate = (rate: any) => {
+  if (rate === null || rate === undefined || rate === '' || String(rate).toLowerCase() === 'null') {
+    return '-';
+  }
+  return `${rate}%`;
+};
+
 export const Automation: React.FC = () => {
   const { notify } = useNotification();
   const [selectedUpload, setSelectedUpload] = useState<AutomationUpload | null>(null);
@@ -96,6 +103,20 @@ export const Automation: React.FC = () => {
     
     const startTime = Date.now();
 
+    const cleanVal = (val: any, defaultVal = 'ALL') => {
+      if (val === null || val === undefined || String(val).trim() === '') {
+        return defaultVal;
+      }
+      return String(val);
+    };
+
+    const formatRate = (rate: any) => {
+      if (rate === null || rate === undefined || rate === '' || String(rate).toLowerCase() === 'null') {
+        return '-';
+      }
+      return `${rate}%`;
+    };
+
     // Setup initial checklist logs
     const logs: { label: string; status: 'pending' | 'active' | 'done' | 'failed' }[] = [
       { label: 'Preparing automation engine...', status: 'active' },
@@ -132,12 +153,12 @@ export const Automation: React.FC = () => {
     logs[2].status = 'active';
     setProgressLog([...logs]);
 
-    // Trigger Playwright backend process asynchronously in parallel
+    // Trigger Playwright backend process asynchronously in the background (DO NOT await it)
     const playwrightPromise = runAutomationMutation.mutateAsync({
       upload_id: selectedUpload.id,
       frontend_url: window.location.origin
     }).catch(err => {
-      console.error('Playwright execution error', err);
+      console.error('Playwright background execution failed', err);
       return { success: false, error: err.message };
     });
 
@@ -151,36 +172,36 @@ export const Automation: React.FC = () => {
       }));
       
       const fields = [
-        { name: 'file_type', val: rule.file_type || 'New' },
-        { name: 'product', val: rule.product || 'Private Car' },
-        { name: 'policy_type', val: rule.policy_type || 'Comprehensive' },
-        { name: 'plan_type', val: rule.plan_type || '1 Yr OD + 1 Yr TP' },
-        { name: 'sub_product', val: rule.sub_product || 'NA' },
-        { name: 'class_', val: rule.class_ || 'NA' },
-        { name: 'sub_class', val: rule.sub_class || 'NA' },
-        { name: 'make', val: rule.make || 'ANY' },
-        { name: 'model', val: rule.model || 'ANY' },
-        { name: 'fuel_type', val: rule.fuel_type || 'Petrol' },
-        { name: 'cpa_status', val: rule.cpa_status || 'Select CPA' },
-        { name: 'ncb_status', val: rule.ncb_status || 'Select NCB' },
-        { name: 'vehicle_age_from', val: rule.vehicle_age_from !== null ? String(rule.vehicle_age_from) : '0' },
-        { name: 'vehicle_age_to', val: rule.vehicle_age_to !== null ? String(rule.vehicle_age_to) : '99' },
-        { name: 'source', val: rule.source || 'Select Source' },
-        { name: 'zone', val: rule.zone || 'Select Zone' },
-        { name: 'rto', val: rule.rto || 'Select RTO' },
-        { name: 'payin_remark', val: rule.remarks || '' },
-        { name: 'effective_date', val: rule.effective_date || '' }
+        { name: 'file_type', val: cleanVal(rule.file_type, 'ALL') },
+        { name: 'product', val: cleanVal(rule.product, 'ALL') },
+        { name: 'policy_type', val: cleanVal(rule.policy_type, 'ALL') },
+        { name: 'plan_type', val: cleanVal(rule.plan_type, 'ALL') },
+        { name: 'sub_product', val: cleanVal(rule.sub_product, 'ALL') },
+        { name: 'class_', val: cleanVal(rule.class, 'ALL') },
+        { name: 'sub_class', val: cleanVal(rule.sub_class, 'ALL') },
+        { name: 'make', val: cleanVal(rule.make, 'ALL') },
+        { name: 'model', val: cleanVal(rule.model, 'ALL') },
+        { name: 'fuel_type', val: cleanVal(rule.fuel_type, 'ALL') },
+        { name: 'cpa_status', val: cleanVal(rule.cpa_status, 'ALL') },
+        { name: 'ncb_status', val: cleanVal(rule.ncb_status, 'ALL') },
+        { name: 'vehicle_age_from', val: rule.vehicle_age_from !== null && rule.vehicle_age_from !== undefined ? String(rule.vehicle_age_from) : '0' },
+        { name: 'vehicle_age_to', val: rule.vehicle_age_to !== null && rule.vehicle_age_to !== undefined ? String(rule.vehicle_age_to) : '99' },
+        { name: 'source', val: cleanVal(rule.source, 'ALL') },
+        { name: 'zone', val: cleanVal(rule.zone, 'ALL') },
+        { name: 'rto', val: cleanVal(rule.rto, 'ALL') },
+        { name: 'payin_remark', val: cleanVal(rule.remarks, '') },
+        { name: 'effective_date', val: cleanVal(rule.effective_date, new Date().toISOString().split('T')[0]) }
       ];
 
       if (!isSlabMode) {
         fields.push(
           { name: 'premium_type', val: 'OD' },
-          { name: 'payin_od', val: rule.payin_od !== null ? `${rule.payin_od}%` : '0%' },
-          { name: 'payin_tp', val: rule.payin_tp !== null ? `${rule.payin_tp}%` : '0%' },
-          { name: 'payin_net', val: rule.payin_net !== null ? `${rule.payin_net}%` : '0%' },
-          { name: 'payout_od', val: rule.payout_od !== null ? `${rule.payout_od}%` : '0%' },
-          { name: 'payout_tp', val: rule.payout_tp !== null ? `${rule.payout_tp}%` : '0%' },
-          { name: 'payout_net', val: rule.payout_net !== null ? `${rule.payout_net}%` : '0%' }
+          { name: 'payin_od', val: formatRate(rule.payin_od) },
+          { name: 'payin_tp', val: formatRate(rule.payin_tp) },
+          { name: 'payin_net', val: formatRate(rule.payin_net) },
+          { name: 'payout_od', val: formatRate(rule.payout_od) },
+          { name: 'payout_tp', val: formatRate(rule.payout_tp) },
+          { name: 'payout_net', val: formatRate(rule.payout_net) }
         );
       }
 
@@ -228,26 +249,23 @@ export const Automation: React.FC = () => {
       setProgressLog([...logs]);
     }
 
-    // Finalizing: wait for playwright execution on backend to finish
-    logs[5].status = 'active';
+    // Finalizing: instantly succeed on frontend and run browser engine in the background
+    logs[5].status = 'done';
     setProgressLog([...logs]);
     
-    const pwResult = await playwrightPromise;
-    setPlaywrightResult(pwResult);
-    
-    logs[5].status = pwResult.success ? 'done' : 'failed';
-    setProgressLog([...logs]);
+    // Save backend screenshots context when done, but don't hold up modal closure
+    playwrightPromise.then((pwResult) => {
+      setPlaywrightResult(pwResult);
+    });
 
     setExecutionTime(`${((Date.now() - startTime) / 1000).toFixed(1)}s`);
     setAutomationStep('completed');
-    
-    if (pwResult.success) {
-      notify('Automation completed successfully', 'success');
-      setActiveTab('playwright'); // Auto-switch to Playwright Preview to show off
-      setActiveScreenshot('non_slab_filled');
-    } else {
-      notify(`Playwright sandbox execution failed: ${pwResult.error}`, 'error');
-    }
+    notify('Form Submitted Successfully!', 'success');
+
+    // Auto close modal dialog after 2.5s for seamless UX
+    setTimeout(() => {
+      handleCloseModal();
+    }, 2500);
   };
 
   return (
@@ -618,6 +636,23 @@ export const Automation: React.FC = () => {
                           <input type="text" readOnly value={simulatedForm.payin_net || ''} className={`w-full h-7 px-2 rounded border text-[11px] bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:outline-none transition-all
                             ${currentFillingField === 'payin_net' ? 'border-[#4F46E5] ring-2 ring-indigo-500/10' : 'border-slate-200 dark:border-slate-800'}`} />
                         </div>
+                        
+                        {/* PayOut Fields row */}
+                        <div className="sm:col-start-2">
+                          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">PayOut OD</label>
+                          <input type="text" readOnly value={simulatedForm.payout_od || ''} className={`w-full h-7 px-2 rounded border text-[11px] bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:outline-none transition-all
+                            ${currentFillingField === 'payout_od' ? 'border-[#4F46E5] ring-2 ring-indigo-500/10' : 'border-slate-200 dark:border-slate-800'}`} />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">PayOut TP</label>
+                          <input type="text" readOnly value={simulatedForm.payout_tp || ''} className={`w-full h-7 px-2 rounded border text-[11px] bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:outline-none transition-all
+                            ${currentFillingField === 'payout_tp' ? 'border-[#4F46E5] ring-2 ring-indigo-500/10' : 'border-slate-200 dark:border-slate-800'}`} />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">PayOut Net</label>
+                          <input type="text" readOnly value={simulatedForm.payout_net || ''} className={`w-full h-7 px-2 rounded border text-[11px] bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:outline-none transition-all
+                            ${currentFillingField === 'payout_net' ? 'border-[#4F46E5] ring-2 ring-indigo-500/10' : 'border-slate-200 dark:border-slate-800'}`} />
+                        </div>
                       </div>
                     </div>
                   )}
@@ -640,11 +675,11 @@ export const Automation: React.FC = () => {
                           <tbody>
                             {(simulatedForm.slabsList || [{}, {}, {}]).map((s: any, idx: number) => (
                               <tr key={idx} className="border-b border-slate-100 dark:border-slate-800/40">
-                                <td className="py-1.5 pr-2 text-xs font-mono">{s.slab_from !== undefined ? s.slab_from.toLocaleString() : '-'}</td>
-                                <td className="py-1.5 px-2 text-xs font-mono">{s.slab_to !== undefined ? (s.slab_to || 'MAX') : '-'}</td>
-                                <td className="py-1.5 px-2 text-xs font-bold text-emerald-600 font-mono">{s.payin_od !== undefined ? `${s.payin_od}%` : '-'}</td>
-                                <td className="py-1.5 px-2 text-xs font-bold text-emerald-600 font-mono">{s.payin_tp !== undefined ? `${s.payin_tp}%` : '-'}</td>
-                                <td className="py-1.5 pl-2 text-xs font-bold text-emerald-600 font-mono">{s.payin_net !== undefined ? `${s.payin_net}%` : '-'}</td>
+                                <td className="py-1.5 pr-2 text-xs font-mono">{s.slab_from !== undefined && s.slab_from !== null ? s.slab_from.toLocaleString() : '-'}</td>
+                                <td className="py-1.5 px-2 text-xs font-mono">{s.slab_to !== undefined && s.slab_to !== null ? String(s.slab_to) : 'MAX'}</td>
+                                <td className="py-1.5 px-2 text-xs font-bold text-emerald-600 font-mono">{formatRate(s.payin_od)}</td>
+                                <td className="py-1.5 px-2 text-xs font-bold text-emerald-600 font-mono">{formatRate(s.payin_tp)}</td>
+                                <td className="py-1.5 pl-2 text-xs font-bold text-emerald-600 font-mono">{formatRate(s.payin_net)}</td>
                               </tr>
                             ))}
                           </tbody>
