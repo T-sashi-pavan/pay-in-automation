@@ -66,10 +66,12 @@ def expand_state(raw: Optional[str], db: Session) -> Optional[str]:
     for token in tokens:
         mapped = state_map.get(token.upper())
         if mapped:
-            expanded.append(mapped)
+            if mapped not in expanded:
+                expanded.append(mapped)
             changed = True
         else:
-            expanded.append(token)
+            if token not in expanded:
+                expanded.append(token)
     return ", ".join(expanded) if changed else None
 
 

@@ -126,6 +126,38 @@ def patched_group_and_merge_rules(self, all_parsed_rules: list) -> list:
     for r in all_parsed_rules:
         add_traceability_to_rule(r)
         
+        # Pre-correct column classifications (ACT/TP keywords prioritized over parent OD headers)
+        remarks = r.get("remarks") or ""
+        header_name = ""
+        if "Column: " in remarks:
+            parts = remarks.split("Column: ")
+            header_name = parts[-1].split(" | ")[0].strip()
+            
+        if header_name:
+            h_clean = re.sub(r'[^a-z0-9]', " ", header_name.lower())
+            words = h_clean.split()
+            if any(w in words for w in ["tp", "satp", "act"]):
+                # Move flat rates if incorrectly put under OD
+                if r.get("payin_od") is not None and r.get("payin_tp") is None:
+                    r["payin_tp"] = r["payin_od"]
+                    r["payin_od"] = None
+                    r["policy_type"] = "Third Party"
+                # Move payout rates
+                if r.get("payout_od") is not None and r.get("payout_tp") is None:
+                    r["payout_tp"] = r["payout_od"]
+                    r["payout_od"] = None
+                
+                # Move slab rates if any
+                if r.get("slabs"):
+                    for s in r["slabs"]:
+                        if s.get("payin_od") is not None and s.get("payin_tp") is None:
+                            s["payin_tp"] = s["payin_od"]
+                            s["payin_od"] = None
+                            s["premium_type"] = "TP"
+                        if s.get("payout_od") is not None and s.get("payout_tp") is None:
+                            s["payout_tp"] = s["payout_od"]
+                            s["payout_od"] = None
+        
         # Ensure policy type is inferred if missing
         if not r.get("policy_type") or r["policy_type"] == "ALL":
             if r.get("payin_od") is not None and r.get("payin_tp") is not None:
@@ -330,7 +362,12 @@ class ValueNormalizer:
                 "bangalore": "BANGALORE",
                 "corporate region": "CORPORATE REGION",
                 "branch region": "BRANCH REGION",
-                "regional office": "REGIONAL OFFICE"
+                "regional office": "REGIONAL OFFICE",
+                "tg": "TS",
+                "ts": "TS",
+                "telangana": "TS",
+                "telengana": "TS",
+                "ap/ts": "AP, TS"
             }
             for k, v in new_mappings.items():
                 STATE_ABBR_MAP[k] = v

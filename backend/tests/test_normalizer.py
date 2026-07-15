@@ -96,3 +96,50 @@ def test_split_merging_and_policy_type():
     assert any("separate CRM rows" in w for w in cd1_rule["warnings"])
     assert any("separate CRM rows" in w for w in cd2_rule["warnings"])
     assert any("Policy Type became" in w for w in cd2_rule["warnings"])
+
+def test_prioritize_tp_classification():
+    from backend.app.services.excel_parser.parser import ExcelParserService
+    parser = ExcelParserService()
+    
+    # Simulates row under an OD parent header, but with sub-headers ACT (TP) and PACK (OD)
+    raw_rules = [
+        {
+            "lob": "Motor", "file_type": "ALL", "insurance_company": "Cholamandalam",
+            "product": "GCV3", "policy_type": "Comprehensive", "state": "OR",
+            "payin_od": 0.075, "remarks": "Column: Odisha - OD - ACT", "raw_json": {"Odisha - OD - ACT": 0.075}
+        },
+        {
+            "lob": "Motor", "file_type": "ALL", "insurance_company": "Cholamandalam",
+            "product": "GCV3", "policy_type": "Comprehensive", "state": "OR",
+            "payin_od": 0.125, "remarks": "Column: Odisha - OD - PACK", "raw_json": {"Odisha - OD - PACK": 0.125}
+        }
+    ]
+    
+    merged = parser._group_and_merge_rules(raw_rules)
+    
+    # Since they represent the same location/channel but one is TP (ACT) and one is OD (PACK),
+    # they should be merged into a single comprehensive row with OD=12.5% and TP=7.5%
+    assert len(merged) == 1
+    rule = merged[0]
+    
+    # 7.5% and 12.5% are converted to percentages during serialization, but raw rates in parsed rule are:
+    assert rule["payin_tp"] == 0.075
+    assert rule["payin_od"] == 0.125
+    assert rule["policy_type"] == "Comprehensive, Third Party"
+
+def test_state_name_deduplication():
+    from backend.app.services.master_data_service import expand_state
+    # Mocking db context is not needed for mapping checks if we can mock the get_state_map return
+    class MockDb:
+        pass
+    
+    # Let's test that expand_state deduplicates identical expanded names
+    import backend.app.services.master_data_service as mds
+    original_get_state_map = mds.get_state_map
+    try:
+        mds.get_state_map = lambda db: {"AP": "Andhra Pradesh", "TS": "Telangana", "TG": "Telangana"}
+        
+        res = expand_state("AP, TS, TG", MockDb())
+        assert res == "Andhra Pradesh, Telangana"
+    finally:
+        mds.get_state_map = original_get_state_map
