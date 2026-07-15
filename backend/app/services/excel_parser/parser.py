@@ -283,7 +283,7 @@ SLAB_HINT_KEYWORDS = [
 ]
 
 
-# Known locations in Indian insurance grids
+# Known locations in India
 STATES_LIST = [
     "andaman", "nicobar", "andhra pradesh", "andra pradesh", "ap/ts", "ap", "ts", "tg", "telangana",
     "telengana", "arunachal", "ar", "assam", "as", "bihar", "bh", "chandigarh", "ch", "chhattisgarh",
@@ -295,7 +295,7 @@ STATES_LIST = [
     "rj", "sikkim", "sk", "tamil nadu", "tn", "tripura", "tr", "uttar pradesh", "up", "uttarakhand",
     "uk", "ua", "ut", "west bengal", "wb", "pan india", "ahmedabad", "bangalore", "bhubaneshwar",
     "mumbai", "nagpur", "pune", "surat", "vadodara", "vijaywada", "vishakapatnam", "central odisha",
-    "metro"
+    "metro", "hyderabad", "rom1", "rom2", "rom3", "rom", "vizag", "andamans", "srinagar"
 ]
 
 STATE_ABBR_MAP = {
@@ -344,6 +344,7 @@ STATE_ABBR_MAP = {
     "lakshadweep": "LD",
     "puducherry": "PY",
     "pondicherry": "PY",
+    "pondy": "PY",
     "chandigarh": "CH",
     "dadra": "DN",
     "daman": "DD",
@@ -391,6 +392,14 @@ STATE_ABBR_MAP = {
     "dn": "DN",
     "dd": "DD",
     "ap": "AP",
+    "hyderabad": "HYDERABAD",
+    "rom1": "ROM",
+    "rom2": "ROM",
+    "rom3": "ROM",
+    "rom": "ROM",
+    "vizag": "VISHAKAPATNAM",
+    "andamans": "AN",
+    "srinagar": "JK"
 }
 
 class ExcelParserService:
@@ -430,10 +439,8 @@ class ExcelParserService:
                     matched = True
                     break
             if not matched:
-                # Split header string into words to match locations exactly
-                words = [w.strip() for w in val_clean.replace("-", " ").replace("/", " ").replace("(", " ").replace(")", " ").split()]
-                for w in words:
-                    if w in STATES_LIST:
+                for loc_name in STATES_LIST:
+                    if re.search(r'\b' + re.escape(loc_name) + r'\b', val_clean):
                         score += 1
                         break
         return score
@@ -509,15 +516,27 @@ class ExcelParserService:
                             best_syn_len = len(syn)
                             matched_param = std
 
-            # Check if this column is a Location Column using exact word matching
-            matched_locations = []
-            for w in words:
-                if w in STATES_LIST:
-                    abbr = STATE_ABBR_MAP.get(w, w.upper())
+            # Check if this column is a Location Column using word-bounded matching
+            matched_locations_with_pos = []
+            for loc_name in STATES_LIST:
+                pattern = r'\b' + re.escape(loc_name) + r'\b'
+                match = re.search(pattern, h_clean)
+                if match:
+                    if loc_name == "or" and any(x in h_clean for x in ["comp or", "tp or", "od or", "net or", "reward or"]):
+                        continue
+                    if loc_name == "as" and "same as" in h_clean:
+                        continue
+                    abbr = STATE_ABBR_MAP.get(loc_name, loc_name.upper())
                     for a in abbr.split(","):
                         a_clean = a.strip().upper()
-                        if a_clean not in matched_locations:
-                            matched_locations.append(a_clean)
+                        matched_locations_with_pos.append((match.start(), a_clean))
+            
+            # Sort by position in header, then deduplicate
+            matched_locations_with_pos.sort()
+            matched_locations = []
+            for _, a_clean in matched_locations_with_pos:
+                if a_clean not in matched_locations:
+                    matched_locations.append(a_clean)
 
             if matched_locations:
                 matched_location = ", ".join(matched_locations)
@@ -1310,8 +1329,92 @@ class ExcelParserService:
                 
                 final_rules.append(base_rule)
                 
-        print(f"[WORKBOOK PARSING COMPLETED] Grouped {len(all_parsed_rules)} rules into {len(final_rules)} merged rules.")
+        # ─── Post-Process NON_SLAB rules to merge OD and TP rows ───
+        non_slab_to_merge = [r for r in final_rules if r.get("commission_type") == "NON_SLAB"]
+        slab_rules_to_keep = [r for r in final_rules if r.get("commission_type") != "NON_SLAB"]
+
+        merged_non_slabs: Dict[Tuple, List[Dict[str, Any]]] = {}
+        for r in non_slab_to_merge:
+            m_key = (
+                str(r.get("lob") or "").strip().upper(),
+                str(r.get("file_type") or "").strip().upper(),
+                str(r.get("insurance_company") or "").strip().upper(),
+                str(r.get("product") or "").strip().upper(),
+                str(r.get("plan_type") or "").strip().upper(),
+                str(r.get("sub_product") or "").strip().upper(),
+                str(r.get("class") or "").strip().upper(),
+                str(r.get("sub_class") or "").strip().upper(),
+                str(r.get("make") or "").strip().upper(),
+                str(r.get("model") or "").strip().upper(),
+                str(r.get("fuel_type") or "").strip().upper(),
+                str(r.get("body_type") or "").strip().upper(),
+                str(r.get("vehicle_age_from") or "").strip(),
+                str(r.get("vehicle_age_to") or "").strip(),
+                str(r.get("cpa_status") or "").strip().upper(),
+                str(r.get("ncb_status") or "").strip().upper(),
+                str(r.get("partner_type") or "").strip().upper(),
+                str(r.get("state") or "").strip().upper(),
+                str(r.get("zone") or "").strip().upper(),
+                str(r.get("source") or "").strip().upper(),
+                str(r.get("rto") or "").strip().upper(),
+                str(r.get("effective_date") or "").strip(),
+            )
+            merged_non_slabs.setdefault(m_key, []).append(r)
+
+        new_non_slabs = []
+        for m_key, group in merged_non_slabs.items():
+            if len(group) == 1:
+                new_non_slabs.append(group[0])
+            else:
+                merged = group[0].copy()
+                rate_fields = [
+                    "payin_od", "payout_od", "payin_tp", "payout_tp",
+                    "payin_net", "payout_net", "payin_reward", "payout_reward",
+                    "payin_scheme", "payout_scheme"
+                ]
+                for rf in rate_fields:
+                    non_null_val = next((item.get(rf) for item in group if item.get(rf) is not None), None)
+                    merged[rf] = non_null_val
+
+                p_types = {str(item.get("policy_type") or "ALL").strip() for item in group}
+                # Filter out "ALL" from p_types if there are other, more specific policy types
+                p_types_clean = {pt for pt in p_types if pt.upper() != "ALL"}
+                if not p_types_clean:
+                    p_types_clean = {"ALL"}
+
+                if len(p_types_clean) > 1:
+                    merged["policy_type"] = ", ".join(sorted(list(p_types_clean)))
+                else:
+                    merged["policy_type"] = list(p_types_clean)[0]
+
+                all_remarks = []
+                for item in group:
+                    rem = item.get("remarks")
+                    if rem and rem != "ALL":
+                        all_remarks.append(rem)
+                if all_remarks:
+                    unique_remarks = []
+                    for rem in all_remarks:
+                        if rem not in unique_remarks:
+                            unique_remarks.append(rem)
+                    merged["remarks"] = " | ".join(unique_remarks)
+                else:
+                    merged["remarks"] = "ALL"
+
+                combined_raw = {}
+                for item in group:
+                    raw = item.get("raw_json")
+                    if isinstance(raw, dict):
+                        combined_raw.update(raw)
+                merged["raw_json"] = combined_raw
+
+                new_non_slabs.append(merged)
+
+        final_rules = slab_rules_to_keep + new_non_slabs
+
+        print(f"[WORKBOOK PARSING COMPLETED] Grouped {len(all_parsed_rules)} rules into {len(final_rules)} merged rules (Non-Slab OD/TP combined).")
         return final_rules
+
 
     def _is_ignored_row(self, row: pd.Series, headers: List[str]) -> bool:
         if row.isnull().all():

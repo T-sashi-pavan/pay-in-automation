@@ -204,7 +204,7 @@ export const ExpandedRuleDetails: React.FC<ExpandedRuleDetailsProps> = ({ rule, 
                       const isZeroOrNull = c.val === null || c.val === undefined || c.val === 0;
                       const colorClass = isZeroOrNull
                         ? 'text-slate-400 dark:text-slate-600'
-                        : (i % 2 === 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400');
+                        : (i % 2 === 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-yellow-500 dark:text-yellow-400');
                       return (
                         <div key={i} className="bg-slate-50 dark:bg-slate-900/30 border border-[#E5E7EB] dark:border-slate-900/60 rounded-xl p-3 flex flex-col items-center justify-center text-center">
                           <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">{c.label}</span>
@@ -309,7 +309,7 @@ export const ExpandedRuleDetails: React.FC<ExpandedRuleDetailsProps> = ({ rule, 
                                         <EditableCell label="Pay-In Slab From" value={slab.slab_from} fieldType="number" displayValue={<span className={cellCls('slab_from', '')} title={cellTitle('slab_from')}>{slab.slab_from !== null ? slab.slab_from.toLocaleString() : '0'}</span>} onSave={(v) => editSlab('slab_from', v)} disabled={!onEditSlab} />
                                       </td>
                                       <td className="px-4 py-2.5 text-xs text-slate-800 dark:text-slate-200 font-mono">
-                                        <EditableCell label="Pay-In Slab Upto" value={slab.slab_to} fieldType="number" displayValue={<span className={cellCls('slab_to', '')} title={cellTitle('slab_to')}>{slab.slab_to !== null ? slab.slab_to.toLocaleString() : '∞'}</span>} onSave={(v) => editSlab('slab_to', v)} disabled={!onEditSlab} />
+                                        <EditableCell label="Pay-In Slab Upto" value={slab.slab_to} fieldType="number" displayValue={<span className={cellCls('slab_to', '')} title={cellTitle('slab_to')}>{slab.slab_to !== null && slab.slab_to !== 'OPEN' && slab.slab_to !== 'MAX' ? slab.slab_to.toLocaleString() : 'MAX'}</span>} onSave={(v) => editSlab('slab_to', v)} disabled={!onEditSlab} />
                                       </td>
                                     </>
                                   );
@@ -317,15 +317,15 @@ export const ExpandedRuleDetails: React.FC<ExpandedRuleDetailsProps> = ({ rule, 
                                 <td className={`px-4 py-2.5 text-xs font-bold text-right ${isOdZero ? 'text-slate-400 dark:text-slate-600' : 'text-emerald-600 dark:text-emerald-400'}`}>
                                   <EditableCell label="Pay-In OD" value={slab.payin_od} fieldType="number" displayValue={<span>{formatPercentage(slab.payin_od)}</span>} onSave={(v) => editSlab('payin_od', v)} disabled={!onEditSlab} className="justify-end" />
                                 </td>
-                                <td className={`px-4 py-2.5 text-xs font-bold text-right ${isOdPayoutZero ? 'text-slate-400 dark:text-slate-600' : 'text-amber-600 dark:text-amber-400'}`}>{formatPercentage(slab.payout_od)}</td>
+                                <td className={`px-4 py-2.5 text-xs font-bold text-right ${isOdPayoutZero ? 'text-slate-400 dark:text-slate-600' : 'text-yellow-500 dark:text-yellow-400'}`}>{formatPercentage(slab.payout_od)}</td>
                                 <td className={`px-4 py-2.5 text-xs font-bold text-right ${isTpZero ? 'text-slate-400 dark:text-slate-600' : 'text-emerald-600 dark:text-emerald-400'}`}>
                                   <EditableCell label="Pay-In TP" value={slab.payin_tp} fieldType="number" displayValue={<span>{formatPercentage(slab.payin_tp)}</span>} onSave={(v) => editSlab('payin_tp', v)} disabled={!onEditSlab} className="justify-end" />
                                 </td>
-                                <td className={`px-4 py-2.5 text-xs font-bold text-right ${isTpPayoutZero ? 'text-slate-400 dark:text-slate-600' : 'text-amber-600 dark:text-amber-400'}`}>{formatPercentage(slab.payout_tp)}</td>
+                                <td className={`px-4 py-2.5 text-xs font-bold text-right ${isTpPayoutZero ? 'text-slate-400 dark:text-slate-600' : 'text-yellow-500 dark:text-yellow-400'}`}>{formatPercentage(slab.payout_tp)}</td>
                                 <td className={`px-4 py-2.5 text-xs font-bold text-right ${isNetZero ? 'text-slate-400 dark:text-slate-600' : 'text-emerald-600 dark:text-emerald-400'}`}>
                                   <EditableCell label="Pay-In Net" value={slab.payin_net} fieldType="number" displayValue={<span>{formatPercentage(slab.payin_net)}</span>} onSave={(v) => editSlab('payin_net', v)} disabled={!onEditSlab} className="justify-end" />
                                 </td>
-                                <td className={`px-4 py-2.5 text-xs font-bold text-right ${isNetPayoutZero ? 'text-slate-400 dark:text-slate-600' : 'text-amber-600 dark:text-amber-400'}`}>{formatPercentage(slab.payout_net)}</td>
+                                <td className={`px-4 py-2.5 text-xs font-bold text-right ${isNetPayoutZero ? 'text-slate-400 dark:text-slate-600' : 'text-yellow-500 dark:text-yellow-400'}`}>{formatPercentage(slab.payout_net)}</td>
                               </tr>
                             );
                           })}

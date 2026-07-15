@@ -88,6 +88,10 @@ def on_startup():
             "DN": "Dadra and Nagar Haveli", "DD": "Daman and Diu",
             "DL": "Delhi", "PY": "Puducherry",
             "ALL": "All India",
+            "ROM1": "ROM1", "ROM2": "ROM2", "ROM3": "ROM3", "ROM": "ROM",
+            "HYDERABAD": "Hyderabad", "CHENNAI": "Chennai", "BANGALORE": "Bangalore",
+            "CORPORATE REGION": "Corporate Region", "BRANCH REGION": "Branch Region",
+            "REGIONAL OFFICE": "Regional Office",
         }
         try:
             # Create table if missing (fresh installs before alembic)

@@ -44,7 +44,7 @@ def _serialize_slab(s, is_age_slab: bool = False) -> Dict[str, Any]:
             s.premium_type, "OD" if payin_od is not None else ("TP" if payin_tp is not None else "NET")
         ),
         "slab_from": slab_from_val,
-        "slab_to": s.slab_to if s.slab_to is not None else "OPEN",
+        "slab_to": s.slab_to if s.slab_to is not None else "MAX",
         "payin_od": payin_od,
         "payout_od": compute_payout(payin_od),
         "payin_tp": payin_tp,
@@ -59,7 +59,7 @@ def _serialize_slab(s, is_age_slab: bool = False) -> Dict[str, Any]:
     }
 
 
-def serialize_commission_rule(r: CommissionRule, db: Session) -> Dict[str, Any]:
+def serialize_commission_rule(r: CommissionRule, db: Session, exclude_raw_json: bool = False) -> Dict[str, Any]:
     """
     Canonical response shape for a CommissionRule, reused by the existing
     GET /uploads/{id} and POST /search endpoints, the new PATCH endpoints,
@@ -126,6 +126,17 @@ def serialize_commission_rule(r: CommissionRule, db: Session) -> Dict[str, Any]:
 
     sorted_slabs = sorted(r.slabs, key=_slab_sort_key)
 
+    policy_type_val = r.policy_type
+    if not policy_type_val or policy_type_val == "ALL":
+        has_od = r.payin_od is not None or any(s.payin_od is not None for s in r.slabs)
+        has_tp = r.payin_tp is not None or any(s.payin_tp is not None for s in r.slabs)
+        if has_od and has_tp:
+            policy_type_val = "Comprehensive, Third Party"
+        elif has_od:
+            policy_type_val = "Comprehensive"
+        elif has_tp:
+            policy_type_val = "Third Party"
+
     return {
         "id": r.id,
         "upload_id": r.upload_id,
@@ -135,10 +146,10 @@ def serialize_commission_rule(r: CommissionRule, db: Session) -> Dict[str, Any]:
         "insurance_company": r.insurance_company,
         "product": default_or(r.product, "ALL"),
         "product_label": master_data_service.expand_product(r.product, db),
-        "policy_type": default_or(r.policy_type, "ALL"),
+        "policy_type": default_or(policy_type_val, "ALL"),
         "plan_type": default_or(
             r.plan_type,
-            derive_plan_type(r.plan_type, r.policy_type, r.product, r.sub_class, r.remarks, r.raw_json),
+            derive_plan_type(r.plan_type, r.policy_type, r.product, r.sub_class, r.remarks, None if exclude_raw_json else r.raw_json),
         ),
         "sub_product": default_or(r.sub_product, "ALL"),
         "class": default_or(r.class_, "ALL"),
@@ -175,7 +186,7 @@ def serialize_commission_rule(r: CommissionRule, db: Session) -> Dict[str, Any]:
         "payout_scheme": compute_payout(payin_scheme),
         "validation_status": r.validation_status,
         "warnings": r.warnings,
-        "raw_json": r.raw_json,
+        "raw_json": None if exclude_raw_json else r.raw_json,
         "slabs": [_serialize_slab(s, is_age_slab=is_age_slab) for s in sorted_slabs],
         "_defaulted_fields": defaulted_fields,
     }

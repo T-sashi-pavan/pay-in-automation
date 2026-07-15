@@ -2,7 +2,341 @@ import re
 from datetime import datetime, date, timedelta
 from typing import Optional, Tuple
 
+def extract_commission_column(header: str, state_str: str) -> str:
+    if not header:
+        return ""
+    h_clean = header.lower()
+    
+    # 1. Remove state/region names
+    if state_str:
+        for token in state_str.split(","):
+            token_clean = token.strip().lower()
+            if token_clean:
+                h_clean = h_clean.replace(token_clean, "")
+                
+    # Also remove common state names from the header
+    for loc_name in ["jharkhand", "bihar", "west bengal", "orissa", "gujarat", "goa", "delhi", "kerala", "rajasthan", "uttar pradesh", "punjab", "jammu", "srinagar", "tamil nadu", "assam", "bangalore", "karnataka", "uttarakhand", "haryana", "himachal pradesh", "andamans", "nagaland"]:
+        h_clean = h_clean.replace(loc_name, "")
+        
+    # 2. Remove premium type keywords
+    for kw in ["comp", "pack", "act", "saod", "satp", "tp", "od", "net"]:
+        h_clean = re.sub(r'\b' + re.escape(kw) + r'\b', "", h_clean)
+        
+    # 3. Clean up extra spaces and non-alphanumeric characters
+    h_clean = re.sub(r'[^a-z0-9]', " ", h_clean)
+    words = [w.strip() for w in h_clean.split() if w.strip()]
+    
+    return " ".join(words).upper()
+
+
+def merge_non_conflicting_rules(rules: list) -> list:
+    merged_list = []
+    for r in rules:
+        merged_success = False
+        for m in merged_list:
+            conflict = False
+            rate_fields = [
+                "payin_od", "payout_od", "payin_tp", "payout_tp",
+                "payin_net", "payout_net", "payin_reward", "payout_reward",
+                "payin_scheme", "payout_scheme"
+            ]
+            for rf in rate_fields:
+                if m.get(rf) is not None and r.get(rf) is not None and m.get(rf) != r.get(rf):
+                    conflict = True
+                    break
+            
+            if not conflict:
+                # Merge r into m
+                for rf in rate_fields:
+                    if r.get(rf) is not None:
+                        m[rf] = r[rf]
+                
+                # Merge policy type
+                p1 = m.get("policy_type") or "ALL"
+                p2 = r.get("policy_type") or "ALL"
+                p_types = {pt.strip() for pt in (p1.split(",") + p2.split(",")) if pt.strip() and pt.upper() != "ALL"}
+                m["policy_type"] = ", ".join(sorted(list(p_types))) if p_types else "ALL"
+                
+                # Merge remarks
+                rem1 = m.get("remarks") or ""
+                rem2 = r.get("remarks") or ""
+                rems = []
+                for rem in (rem1.split(" | ") + rem2.split(" | ")):
+                    if rem.strip() and rem.strip() not in rems:
+                        rems.append(rem.strip())
+                m["remarks"] = " | ".join(rems) if rems else "ALL"
+                
+                # Merge raw_json
+                if isinstance(m.get("raw_json"), dict) and isinstance(r.get("raw_json"), dict):
+                    m["raw_json"].update(r["raw_json"])
+                    
+                # Merge warnings
+                w1 = m.get("warnings") or []
+                w2 = r.get("warnings") or []
+                m["warnings"] = list(set(w1 + w2))
+                
+                merged_success = True
+                break
+        
+        if not merged_success:
+            merged_list.append(r.copy())
+    return merged_list
+
+
+def add_traceability_to_rule(r: dict):
+    remarks = r.get("remarks") or ""
+    header_name = ""
+    if "Column: " in remarks:
+        parts = remarks.split("Column: ")
+        header_name = parts[-1].split(" | ")[0].strip()
+    
+    orig_header = r.get("state") or "ALL"
+    orig_col = header_name or "ALL"
+    orig_cell = header_name or "ALL"
+    
+    rate_val = None
+    if header_name and r.get("raw_json"):
+        rate_val = r["raw_json"].get(header_name)
+    elif r.get("raw_json"):
+        for k, v in r["raw_json"].items():
+            if k not in ["Segment", "Make", "Carrier Type", "PROD", "SUBCLASS", "MODEL"]:
+                rate_val = v
+                orig_col = k
+                orig_cell = k
+                break
+                
+    orig_comm_text = f"{orig_col} = {rate_val}" if rate_val is not None else orig_col
+    
+    traceability = {
+        "original_header": orig_header,
+        "original_column": orig_col,
+        "original_cell": orig_cell,
+        "original_commission_text": orig_comm_text
+    }
+    
+    if "raw_json" not in r or r["raw_json"] is None:
+        r["raw_json"] = {}
+    r["raw_json"]["_traceability"] = traceability
+
+
+def patched_group_and_merge_rules(self, all_parsed_rules: list) -> list:
+    from backend.app.services.excel_parser.parser import check_duplicate_slab_ranges
+    
+    # 1. Clean policy types and add comm_col & traceability
+    for r in all_parsed_rules:
+        add_traceability_to_rule(r)
+        
+        # Ensure policy type is inferred if missing
+        if not r.get("policy_type") or r["policy_type"] == "ALL":
+            if r.get("payin_od") is not None and r.get("payin_tp") is not None:
+                r["policy_type"] = "Comprehensive, Third Party"
+            elif r.get("payin_od") is not None:
+                r["policy_type"] = "Comprehensive"
+            elif r.get("payin_tp") is not None:
+                r["policy_type"] = "Third Party"
+            else:
+                r["policy_type"] = "ALL"
+
+    # Group rules by (business_key, comm_col)
+    grouped_by_business_col = {}
+    business_key_to_cols = {}
+    
+    for r in all_parsed_rules:
+        b_key = (
+            str(r.get("lob") or "").strip().upper(),
+            str(r.get("file_type") or "").strip().upper(),
+            str(r.get("insurance_company") or "").strip().upper(),
+            str(r.get("product") or "").strip().upper(),
+            str(r.get("plan_type") or "").strip().upper(),
+            str(r.get("sub_product") or "").strip().upper(),
+            str(r.get("class") or "").strip().upper(),
+            str(r.get("sub_class") or "").strip().upper(),
+            str(r.get("make") or "").strip().upper(),
+            str(r.get("model") or "").strip().upper(),
+            str(r.get("fuel_type") or "").strip().upper(),
+            str(r.get("body_type") or "").strip().upper(),
+            str(r.get("vehicle_age_from") or "").strip(),
+            str(r.get("vehicle_age_to") or "").strip(),
+            str(r.get("cpa_status") or "").strip().upper(),
+            str(r.get("ncb_status") or "").strip().upper(),
+            str(r.get("partner_type") or "").strip().upper(),
+            str(r.get("state") or "").strip().upper(),
+            str(r.get("zone") or "").strip().upper(),
+            str(r.get("source") or "").strip().upper(),
+            str(r.get("rto") or "").strip().upper(),
+            str(r.get("effective_date") or "").strip(),
+        )
+        
+        remarks = r.get("remarks") or ""
+        header_name = ""
+        if "Column: " in remarks:
+            parts = remarks.split("Column: ")
+            header_name = parts[-1].split(" | ")[0].strip()
+        comm_col = extract_commission_column(header_name, r.get("state"))
+        
+        grouped_by_business_col.setdefault((b_key, comm_col), []).append(r)
+        business_key_to_cols.setdefault(b_key, set()).add(comm_col)
+
+    final_rules = []
+    for (b_key, comm_col), group in grouped_by_business_col.items():
+        is_any_slab = any(r.get("commission_type") == "SLAB" for r in group)
+        
+        if is_any_slab:
+            base_rule = group[0].copy()
+            base_rule["commission_type"] = "SLAB"
+            base_rule["slab_configuration"] = True
+            
+            merged_slabs = []
+            for rule_item in group:
+                if rule_item.get("slabs"):
+                    merged_slabs.extend(rule_item["slabs"])
+                else:
+                    slab_obj = {
+                        "payin_type": "PERCENTAGE",
+                        "premium_type": None,
+                        "slab_from": None,
+                        "slab_to": None,
+                        "payin_od": rule_item.get("payin_od"),
+                        "payout_od": rule_item.get("payout_od"),
+                        "payin_tp": rule_item.get("payin_tp"),
+                        "payout_tp": rule_item.get("payout_tp"),
+                        "payin_net": rule_item.get("payin_net"),
+                        "payout_net": rule_item.get("payout_net")
+                    }
+                    merged_slabs.append(slab_obj)
+            
+            unique_slabs = []
+            seen_slab_keys = set()
+            for s in merged_slabs:
+                s_key = (
+                    s.get("slab_from"),
+                    s.get("slab_to"),
+                    s.get("payin_od"),
+                    s.get("payin_tp"),
+                    s.get("payin_net"),
+                )
+                if s_key not in seen_slab_keys:
+                    seen_slab_keys.add(s_key)
+                    unique_slabs.append(s)
+            base_rule["slabs"] = unique_slabs
+            
+            for rf in ("payin_od", "payout_od", "payin_tp", "payout_tp", "payin_net", "payout_net",
+                      "payin_reward", "payout_reward", "payin_scheme", "payout_scheme"):
+                base_rule[rf] = None
+                
+            p_types = set()
+            for ri in group:
+                p = ri.get("policy_type") or "ALL"
+                for pt in p.split(","):
+                    if pt.strip() and pt.strip().upper() != "ALL":
+                        p_types.add(pt.strip())
+            base_rule["policy_type"] = ", ".join(sorted(list(p_types))) if p_types else "ALL"
+            
+            all_rems = []
+            combined_raw = {}
+            for ri in group:
+                for rem in (ri.get("remarks") or "").split(" | "):
+                    if rem.strip() and rem.strip() not in all_rems:
+                        all_rems.append(rem.strip())
+                if isinstance(ri.get("raw_json"), dict):
+                    combined_raw.update(ri["raw_json"])
+            base_rule["remarks"] = " | ".join(all_rems) if all_rems else "ALL"
+            base_rule["raw_json"] = combined_raw
+            
+            dup_warnings = check_duplicate_slab_ranges(unique_slabs)
+            base_rule["warnings"] = list(base_rule.get("warnings") or [])
+            if dup_warnings:
+                base_rule["warnings"].extend(dup_warnings)
+                base_rule["validation_status"] = "WARNING"
+                
+            final_rules.append(base_rule)
+        else:
+            merged_group = merge_non_conflicting_rules(group)
+            final_rules.extend(merged_group)
+
+    for r in final_rules:
+        b_key = (
+            str(r.get("lob") or "").strip().upper(),
+            str(r.get("file_type") or "").strip().upper(),
+            str(r.get("insurance_company") or "").strip().upper(),
+            str(r.get("product") or "").strip().upper(),
+            str(r.get("plan_type") or "").strip().upper(),
+            str(r.get("sub_product") or "").strip().upper(),
+            str(r.get("class") or "").strip().upper(),
+            str(r.get("sub_class") or "").strip().upper(),
+            str(r.get("make") or "").strip().upper(),
+            str(r.get("model") or "").strip().upper(),
+            str(r.get("fuel_type") or "").strip().upper(),
+            str(r.get("body_type") or "").strip().upper(),
+            str(r.get("vehicle_age_from") or "").strip(),
+            str(r.get("vehicle_age_to") or "").strip(),
+            str(r.get("cpa_status") or "").strip().upper(),
+            str(r.get("ncb_status") or "").strip().upper(),
+            str(r.get("partner_type") or "").strip().upper(),
+            str(r.get("state") or "").strip().upper(),
+            str(r.get("zone") or "").strip().upper(),
+            str(r.get("source") or "").strip().upper(),
+            str(r.get("rto") or "").strip().upper(),
+            str(r.get("effective_date") or "").strip(),
+        )
+        
+        cols = business_key_to_cols.get(b_key, set())
+        
+        rate_fields = [
+            "payin_od", "payout_od", "payin_tp", "payout_tp",
+            "payin_net", "payout_net", "payin_reward", "payout_reward",
+            "payin_scheme", "payout_scheme"
+        ]
+        for rf in rate_fields:
+            if rf not in r:
+                r[rf] = None
+
+        if "warnings" not in r or r["warnings"] is None:
+            r["warnings"] = []
+            
+        if len(cols) > 1:
+            clean_cols = sorted(list([c for c in cols if c]))
+            col_list_str = ", ".join(clean_cols) if clean_cols else "different commission columns"
+            r["warnings"].append(f"Merged because all business attributes matched except commission columns. Generated separate CRM rows for {col_list_str} to avoid data loss.")
+            
+        p_type = r.get("policy_type") or "ALL"
+        if "," in p_type:
+            r["warnings"].append(f"Policy Type became '{p_type}' instead of 'ALL' because multiple policy types were merged for this rule.")
+
+    return final_rules
+
+
 class ValueNormalizer:
+    def __init__(self):
+        self._apply_patches()
+
+    def _apply_patches(self):
+        try:
+            from backend.app.services.excel_parser.parser import ExcelParserService, STATES_LIST, STATE_ABBR_MAP
+            ExcelParserService._group_and_merge_rules = patched_group_and_merge_rules
+            
+            new_states = ["chennai", "corporate region", "branch region", "regional office"]
+            for s in new_states:
+                if s not in STATES_LIST:
+                    STATES_LIST.append(s)
+                    
+            new_mappings = {
+                "rom1": "ROM1",
+                "rom2": "ROM2",
+                "rom3": "ROM3",
+                "rom": "ROM",
+                "hyderabad": "HYDERABAD",
+                "chennai": "CHENNAI",
+                "bangalore": "BANGALORE",
+                "corporate region": "CORPORATE REGION",
+                "branch region": "BRANCH REGION",
+                "regional office": "REGIONAL OFFICE"
+            }
+            for k, v in new_mappings.items():
+                STATE_ABBR_MAP[k] = v
+        except Exception:
+            pass
+
     @staticmethod
     def normalize_vehicle_age(age_val) -> Tuple[Optional[int], Optional[int]]:
         """
@@ -62,64 +396,110 @@ class ValueNormalizer:
         if not state_str:
             return None
 
+        # Clean duplicate "ALL ALL" -> "ALL"
+        state_str = re.sub(r"\bALL\s+ALL\b", "ALL", state_str, flags=re.IGNORECASE)
+        # Clean "VALIDITY" or other boilerplate words if they are right next to ALL
+        state_str = re.sub(r"\bALL\s+VALIDITY\b", "ALL", state_str, flags=re.IGNORECASE)
+
         # State abbreviation mapping dictionary
-        state_map = {
-            "andhra pradesh": "AP", "andra pradesh": "AP", "ap/ts": "AP, TS", "ap": "AP", "ts": "TS", 
-            "tg": "TS", "telangana": "TS", "telengana": "TS", "arunachal": "AR", "arunachal pradesh": "AR", 
-            "ar": "AR", "assam": "AS", "as": "AS", "bihar": "BR", "br": "BR", "bh": "BR", "chandigarh": "CH", "ch": "CH", 
-            "chhattisgarh": "CG", "cg": "CG", "delhi": "DL", "dl": "DL", "ncr": "DL", "goa": "GA", "ga": "GA",
-            "gujarat": "GJ", "gj": "GJ", "haryana": "HR", "hr": "HR", "himachal": "HP", "hp": "HP", 
-            "jammu": "JK", "kashmir": "JK", "jk": "JK", "jharkhand": "JH", "jh": "JH", 
-            "karnataka": "KA", "ka": "KA", "kerala": "KL", "kl": "KL", "ladakh": "LA", 
-            "madhya pradesh": "MP", "mp": "MP", "maharashtra": "MH", "mh": "MH", "manipur": "MN", 
-            "meghalaya": "ML", "ml": "ML", "mizoram": "MZ", "nagaland": "NL", "nl": "NL", "odisha": "OD", "orissa": "OD", 
-            "od": "OD", "or": "OD", "puducherry": "PY", "pondicherry": "PY", "punjab": "PB", "pb": "PB", 
-            "rajasthan": "RJ", "rj": "RJ", "sikkim": "SK", "tamil nadu": "TN", "tn": "TN", 
-            "tripura": "TR", "tr": "TR", "uttar pradesh": "UP", "up": "UP", "uttarakhand": "UK", 
-            "uk": "UK", "west bengal": "WB", "wb": "WB", "pan india": "ALL", "pan": "ALL", 
-            "india": "ALL", "all": "ALL"
+        state_fullname_map = {
+            "andhra pradesh": "AP", "andra pradesh": "AP", "andhrapradesh": "AP", "andrapradesh": "AP",
+            "arunachal pradesh": "AR", "arunachalpradesh": "AR",
+            "assam": "AS", "bihar": "BR", "chandigarh": "CH", "chhattisgarh": "CG", "chattisgarh": "CG",
+            "delhi": "DL", "ncr": "DL", "goa": "GA", "gujarat": "GJ", "haryana": "HR",
+            "himachal pradesh": "HP", "himachalpradesh": "HP", "himachal": "HP",
+            "jammu & kashmir": "JK", "jammu and kashmir": "JK", "jammu & kasmir": "JK", "j&k": "JK", "j & k": "JK", "jammu": "JK",
+            "jharkhand": "JH", "karnataka": "KA", "kerala": "KL", "ladakh": "LA",
+            "madhya pradesh": "MP", "madhyapradesh": "MP", "maharashtra": "MH", "manipur": "MN",
+            "meghalaya": "ML", "mizoram": "MZ", "nagaland": "NL", "odisha": "OD",
+            "orissa": "OD", "puducherry": "PY", "pondicherry": "PY", "pondy": "PY", "punjab": "PB",
+            "andamans": "AN",
+            "rajasthan": "RJ", "sikkim": "SK", "tamil nadu": "TN", "tamilnadu": "TN", "tripura": "TR",
+            "uttar pradesh": "UP", "uttarpradesh": "UP", "uttarakhand": "UK", "uttaranchal": "UK",
+            "west bengal": "WB", "westbengal": "WB", "telangana": "TS", "telengana": "TS",
+            "rom1": "ROM1", "rom2": "ROM2", "rom3": "ROM3", "rom": "ROM",
+            "hyderabad": "HYDERABAD", "chennai": "CHENNAI", "bangalore": "BANGALORE",
+            "corporate region": "CORPORATE REGION", "branch region": "BRANCH REGION",
+            "regional office": "REGIONAL OFFICE"
         }
         
-        # 2. Check if this is a negative list expression (e.g. contains "except" or "rest of")
-        state_lower = state_str.lower()
-        if "except" in state_lower or "rest of" in state_lower:
-            words = re.split(r"([,();/\s]+)", state_str)
-            normalized_words = []
-            for w in words:
-                w_stripped = w.strip().lower()
-                if w_stripped in state_map:
-                    normalized_words.append(state_map[w_stripped])
-                else:
-                    normalized_words.append(w.upper() if w.isalpha() else w)
-            return "".join(normalized_words)
-
-        # 3. Standard comma/slash/semicolon/newline-separated parsing
-        parts = re.split(r"[,/;\n]+", state_str)
-        clean_parts = []
-        for p in parts:
-            p_clean = p.strip()
-            if not p_clean:
-                continue
-            p_lower = p_clean.lower()
+        # Helper to find all states mentioned in a text
+        def find_states_in_text(text: str) -> list[str]:
+            text_lower = text.lower()
             
-            # Map standard state name to standard abbreviation
-            if p_lower in state_map:
-                mapped = state_map[p_lower]
-                # If mapped contains commas (e.g. "AP, TS"), split them
-                for m in mapped.split(","):
-                    clean_parts.append(m.strip())
-            else:
-                clean_parts.append(p_clean.upper())
+            # 1. Look for full state names and track their positions (with overlap protection)
+            full_name_positions = []
+            sorted_fullnames = sorted(state_fullname_map.keys(), key=len, reverse=True)
+            matched_ranges = []
+            for fullname in sorted_fullnames:
+                abbr = state_fullname_map[fullname]
+                for m in re.finditer(re.escape(fullname), text_lower):
+                    start, end = m.start(), m.end()
+                    # Check if this range overlaps with an already matched longer range
+                    overlap = False
+                    for ms, me in matched_ranges:
+                        if not (end <= ms or start >= me):
+                            overlap = True
+                            break
+                    if not overlap:
+                        full_name_positions.append((start, abbr))
+                        matched_ranges.append((start, end))
+            
+            # 2. Look for word-bounded abbreviations in the text and track positions
+            abbr_positions = []
+            abbrs = {"AP", "TS", "AR", "AS", "BR", "CH", "CG", "DL", "GA", "GJ", "HR", "HP", "JK", "JH", 
+                     "KA", "KL", "LA", "MP", "MH", "MN", "ML", "MZ", "NL", "OD", "PY", "PB", "RJ", "SK", 
+                     "TN", "TR", "UP", "UK", "WB", "ROM1", "ROM2", "ROM3", "ROM", "HYDERABAD", "CHENNAI",
+                     "BANGALORE", "CORPORATE REGION", "BRANCH REGION", "REGIONAL OFFICE"}
+            for m in re.finditer(r"\b[A-Za-z0-9_]+\b", text):
+                word_upper = m.group(0).upper()
+                if word_upper in abbrs:
+                    # Check if this start position was already matched as a full state name to avoid duplicate matches
+                    overlap = False
+                    for ms, me in matched_ranges:
+                        if m.start() >= ms and m.start() < me:
+                            overlap = True
+                            break
+                    if not overlap:
+                        abbr_positions.append((m.start(), word_upper))
+            
+            # Combine and sort by index of appearance in text
+            all_positions = sorted(full_name_positions + abbr_positions, key=lambda x: x[0])
+            
+            # Deduplicate while preserving text order
+            unique_found = []
+            for _, abbr in all_positions:
+                if abbr not in unique_found:
+                    unique_found.append(abbr)
+            return unique_found
+            
+            # Combine and sort by index of appearance in text
+            all_positions = sorted(full_name_positions + abbr_positions, key=lambda x: x[0])
+            
+            # Deduplicate while preserving text order
+            unique_found = []
+            for _, abbr in all_positions:
+                if abbr not in unique_found:
+                    unique_found.append(abbr)
+            return unique_found
 
-        # Deduplicate while preserving order
-        unique_parts = []
-        for cp in clean_parts:
-            if cp not in unique_parts:
-                unique_parts.append(cp)
-
-        if not unique_parts:
-            return None
-        return ", ".join(unique_parts)
+        state_lower = state_str.lower()
+        has_except = any(word in state_lower for word in ["except", "exclude", "excluding", "but not", "other than"])
+        
+        found_states = find_states_in_text(state_str)
+        
+        if has_except:
+            if found_states:
+                return f"ALL EXCEPT {', '.join(found_states)}"
+            return "ALL"
+        else:
+            if found_states:
+                return ", ".join(found_states)
+            
+            if "all" in state_lower or "india" in state_lower:
+                return "ALL"
+                
+            return state_str.upper()
 
     @staticmethod
     def normalize_date(date_val) -> Optional[date]:

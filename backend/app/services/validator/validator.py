@@ -5,7 +5,10 @@ class RuleValidator:
     STANDARD_STATES: Set[str] = {
         "AP", "AR", "AS", "BR", "CG", "CT", "GA", "GJ", "HR", "HP", "JH", "KA", "KL", "MP", 
         "MH", "MN", "ML", "MZ", "NL", "OD", "OR", "PB", "RJ", "SK", "TN", "TG", "TS", "TR", 
-        "UP", "UK", "UA", "UT", "WB", "AN", "CH", "DN", "DD", "DL", "JK", "LA", "LD", "PY", "ALL"
+        "UP", "UK", "UA", "UT", "WB", "AN", "CH", "DN", "DD", "DL", "JK", "LA", "LD", "PY", "ALL",
+        "ROM", "MUMBAI", "PUNE", "SURAT", "VIJAYWADA", "VISHAKAPATNAM", "AHMEDABAD", "VADODARA",
+        "BANGALORE", "NAGPUR", "BHUBANESHWAR", "HYDERABAD", "ROM1", "ROM2", "ROM3", "CHENNAI",
+        "CORPORATE REGION", "BRANCH REGION", "REGIONAL OFFICE"
     }
 
     @staticmethod
@@ -40,7 +43,7 @@ class RuleValidator:
             else:
                 states = [s.strip() for s in state_str.split(",") if s.strip()]
                 for s in states:
-                    if s not in RuleValidator.STANDARD_STATES:
+                    if s.upper() not in RuleValidator.STANDARD_STATES:
                         non_critical_warnings.append(f"Invalid state code: '{s}'")
 
         # 3. Check invalid dates (NON-CRITICAL - auto-corrected to upload date)

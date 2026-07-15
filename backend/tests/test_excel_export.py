@@ -75,8 +75,8 @@ def test_export_workbook_flags_defaulted_cells_in_purple():
     ws = wb["Non-Slab"]
     lob_cell = ws.cell(row=2, column=1)  # LOB is the first business column
     assert lob_cell.value == "Motor"  # default_or's fallback value
-    assert lob_cell.font.color.rgb == "006D28D9"  # the purple "this is a default" color
+    assert lob_cell.font.color.rgb in ("006D28D9", "FF6D28D9")  # the purple "this is a default" color
 
     policy_type_cell = ws.cell(row=2, column=5)  # Policy Type — genuinely populated on the stub
     assert policy_type_cell.value == "Comprehensive"
-    assert policy_type_cell.font.color is None or policy_type_cell.font.color.rgb != "006D28D9"
+    assert policy_type_cell.font.color is None or policy_type_cell.font.color.rgb not in ("006D28D9", "FF6D28D9")

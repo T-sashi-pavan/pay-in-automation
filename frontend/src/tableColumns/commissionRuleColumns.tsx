@@ -89,13 +89,13 @@ const tiersSummaryColumn: ColumnDef<any> = {
     const froms = slabs.map(s => typeof s.slab_from === 'number' ? s.slab_from : parseFloat(s.slab_from as string)).filter(v => !isNaN(v));
     const min = froms.length ? Math.min(...froms) : null;
     
-    const hasOpen = slabs.some(s => s.slab_to === 'OPEN' || s.slab_to === null || s.slab_to === undefined);
+    const hasOpen = slabs.some(s => s.slab_to === 'OPEN' || s.slab_to === 'MAX' || s.slab_to === null || s.slab_to === undefined);
     
-    let maxStr = 'OPEN';
+    let maxStr = 'MAX';
     if (!hasOpen) {
       const tos = slabs.map(s => typeof s.slab_to === 'number' ? s.slab_to : parseFloat(s.slab_to as string)).filter(v => !isNaN(v));
       const max = tos.length ? Math.max(...tos) : null;
-      maxStr = max !== null ? max.toLocaleString() : 'OPEN';
+      maxStr = max !== null ? max.toLocaleString() : 'MAX';
     }
 
     const minStr = min !== null ? min.toLocaleString() : '-';
@@ -114,7 +114,7 @@ const tiersSummaryColumn: ColumnDef<any> = {
 };
 
 function rateCol(accessorKey: string, header: string, field: EditableRuleField, opts: ColumnFactoryOptions, direction: 'in' | 'out'): ColumnDef<any> {
-  const colorClass = direction === 'in' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400';
+  const colorClass = direction === 'in' ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400';
   return {
     accessorKey,
     header,

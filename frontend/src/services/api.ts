@@ -57,6 +57,11 @@ export const api = {
     return response.data;
   },
 
+  renameUpload: async (id: number, filename: string): Promise<{ id: number; filename: string }> => {
+    const response = await apiClient.patch<{ id: number; filename: string }>(`/uploads/${id}/rename`, { filename });
+    return response.data;
+  },
+
   /** Returns distinct filter options WITH per-value row counts from the entire DB or isolated to an upload */
   getDistinctFilters: async (uploadId?: number): Promise<FilterOptionsMap> => {
     const response = await apiClient.get<FilterOptionsMap>('/filters', {
@@ -140,11 +145,7 @@ export const api = {
   },
 
   /**
-   * Builds the download URL for GET /uploads/{id}/export — a real, server-generated
-   * two-sheet .xlsx (Non-Slab, Slab-with-nested-tiers) covering the FULL filtered
-   * result set, not just the current page. Replaces the old client-side CSV/JSON
-   * export, which was capped at 50 rows and discarded slab tier detail entirely.
-   * Params use the same keys as getExtractedRecords's filters.
+   * Builds the download URL for GET /uploads/{id}/export.
    */
   getExportUrl: (id: number, params: Record<string, any> = {}): string => {
     const query = new URLSearchParams();
@@ -166,5 +167,23 @@ export const api = {
     });
     const qs = query.toString();
     return `${API_BASE_URL}/uploads/${id}/export/json${qs ? `?${qs}` : ''}`;
+  },
+
+  /**
+   * Downloads a file via fetch() + Blob, triggering a browser save dialog.
+   * Returns a promise so the caller can show/hide a loading toast.
+   */
+  downloadFile: async (url: string, suggestedFilename: string): Promise<void> => {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Server returned ${res.status}`);
+    const blob = await res.blob();
+    const objUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objUrl;
+    a.download = suggestedFilename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(objUrl);
   },
 };

@@ -146,10 +146,25 @@ SLAB GROUPING AND EXTRACTION RULES (CRITICAL)
    * Place ALL the ranges/tiers in the 'slabs' array of this single row.
    * Do NOT create separate rows in the 'rows' list for each range/tier.
    * Example: If there are 3 discount ranges (up to 30%, 30-60%, >60%), they must be returned as 3 objects inside the 'slabs' array of ONE rule row, not 3 separate rows in the main 'rows' array.
-2. Slabs rates matching: For each slab object in the 'slabs' array:
-   * Populate both payin_od and payin_tp if both are specified for that range (e.g. "20% on OD + 50% on TP" -> payin_od = 20.0, payin_tp = 50.0).
+   * If a page has multiple rows for the same subclass/product representing different ranges (e.g. "0 to 10 years" and "10 to 15 years" or "Discount of 60%" and "Discount exceeding 60%"), they MUST be grouped together into a SINGLE row with commission_type = "SLAB", containing all the slabs.
+
+2. Slab Tiers Rate Mapping (CRITICAL):
+   * Inside each object of the 'slabs' array, you MUST specify the correct, corresponding rate values for that SPECIFIC range/tier.
+   * Do NOT copy the rule-level 'payin_od', 'payin_tp', or 'payin_net' values or keep them identical across all slab objects if the rates differ for each range in the text.
+   * Set the outer rule-level rate fields ('payin_od', 'payin_tp', 'payin_net', 'payout_od', 'payout_tp', 'payout_net') to null when commission_type is SLAB. All rates must be defined inside each individual slab object in the 'slabs' array instead.
+   * Example: If the text is:
+     "Discount of 60%: Commission 5% on Net Premium (OD+TP). Discount exceeding 60%: Commission 2.5% on Net Premium (OD+TP)"
+     Then you must return ONE row with commission_type = "SLAB" and slabs:
+       - slab 1: slab_from = 0, slab_to = 60, payin_od = 5.0, payin_tp = 5.0, condition_field = "Discount"
+       - slab 2: slab_from = 60, slab_to = "MAX", payin_od = 2.5, payin_tp = 2.5, condition_field = "Discount"
+     (Note that Net Premium (OD+TP) means the percentage applies to both OD and TP, so populate both payin_od and payin_tp with that value!)
+   * Example: If the text is:
+     "Upto 10 years of vehicle age: 7.5% on OD + 2.5% on TP. Beyond 10 years upto 15 years: 5% on OD + 2.5% on TP"
+     Then you must return ONE row with commission_type = "SLAB" and slabs:
+       - slab 1: slab_from = 0, slab_to = 10, payin_od = 7.5, payin_tp = 2.5, condition_field = "Vehicle Age"
+       - slab 2: slab_from = 10, slab_to = 15, payin_od = 5.0, payin_tp = 2.5, condition_field = "Vehicle Age"
    * Set condition_field to the field name (e.g. "Discount", "Vehicle Age", "CC").
-   * Specify slab_from and slab_to clearly. For example, "up to 30%" -> slab_from = 0, slab_to = 30. ">30% up to 60%" -> slab_from = 30, slab_to = 60. ">60%" -> slab_from = 60, slab_to = "OPEN".
+   * Specify slab_from and slab_to clearly. For example, "up to 30%" -> slab_from = 0, slab_to = 30. ">30% up to 60%" -> slab_from = 30, slab_to = 60. ">60%" -> slab_from = 60, slab_to = "MAX".
    * Never output only a single tier rule if the table explicitly contains multiple tiers! Always extract every single range tier in the table.
 
 ====================================================
@@ -493,13 +508,27 @@ class PdfParserService:
         logger.info(f"[PDF COMPLETED] Successfully parsed {filename}. Grouped {len(all_parsed_rules)} rules into {len(final_rules)} merged rules.")
         return final_rules
 
+    def _is_empty_rate(self, val: Any) -> bool:
+        if val is None:
+            return True
+        val_str = str(val).strip().upper()
+        if val_str in ("", "NONE", "NULL", "NIL", "0", "0.0", "0%", "N/A", "NA"):
+            return True
+        try:
+            clean_val = val_str.replace("%", "").strip()
+            if float(clean_val) == 0.0:
+                return True
+        except ValueError:
+            pass
+        return False
+
     def _is_rule_empty_of_rates(self, rule: Dict[str, Any]) -> bool:
         rate_fields = ("payin_od", "payin_tp", "payin_net", "payin_reward", "payin_scheme")
-        if any(rule.get(f) is not None for f in rate_fields):
+        if not all(self._is_empty_rate(rule.get(f)) for f in rate_fields):
             return False
             
         for slab in rule.get("slabs") or []:
-            if any(slab.get(f) is not None for f in ("payin_od", "payin_tp", "payin_net")):
+            if not all(self._is_empty_rate(slab.get(f)) for f in ("payin_od", "payin_tp", "payin_net")):
                 return False
                 
         return True
@@ -1141,7 +1170,7 @@ class PdfParserService:
             if is_slab:
                 explanation_val = (
                     f"Reason: Detected numeric slab ranges for '{slab_condition or 'Discount/Age/IDV/CC'}'. "
-                    f"Generated Slabs: " + ", ".join([f"{s.get('slab_from') or 0}-{s.get('slab_to') or 'MAX'}" for s in slabs_in]) + ". "
+                    f"Generated Slabs: " + ", ".join([f"{s.get('slab_from') or 0}-{s.get('slab_to') if s.get('slab_to') not in (None, 'OPEN', 'MAX') else 'MAX'}" for s in slabs_in]) + ". "
                     f"Original Text: {source}"
                 )
             else:

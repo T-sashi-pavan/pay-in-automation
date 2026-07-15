@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useNotification } from '../contexts/NotificationContext';
 import { api } from '../services/api';
 import type { FilterOptionsMap } from '../services/api';
 import type { FilterOption } from '../components/MultiSelectFilter';
@@ -71,6 +72,7 @@ interface DashboardProps {
   selectedUploadId: number | null;
   onSelectUpload: (id: number) => void;
   onDeleteUpload: (id: number) => void;
+  onRenameUpload: (id: number, filename: string) => void;
   isUploadsLoading: boolean;
   onUploadFile: (file: File) => void;
   isUploading: boolean;
@@ -112,15 +114,18 @@ export const Dashboard: React.FC<DashboardProps> = ({
   selectedUploadId,
   onSelectUpload,
   onDeleteUpload,
+  onRenameUpload,
   isUploadsLoading,
   onUploadFile,
   isUploading,
 }) => {
   const { theme, toggleTheme } = useTheme();
   const { openMobileSidebar } = useSidebar();
+  const { notify } = useNotification();
 
   const selectedUpload = uploads.find(u => u.id === selectedUploadId);
   const hasSlabs = selectedUpload?.has_slabs ?? false;
+  const isProcessing = selectedUpload?.status === 'PROCESSING';
 
   // Auto-switch to Non-Slab tab if the selected upload has no slabs
   useEffect(() => {
@@ -238,10 +243,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
     .filter(([key, val]) => val && key !== 'search' && key !== 'commission_type')
     .length;
 
-  const handleExportExcel = () => {
+  const handleExportExcel = async () => {
     if (!selectedUploadId) return;
-    // Same filter-key mapping App.tsx uses when calling getExtractedRecords,
-    // so "export" always matches what's currently on screen.
     const exportParams: Record<string, any> = {};
     Object.entries(filters).forEach(([key, val]) => {
       if (!val || key === 'commission_type' || key === 'commissionType') return;
@@ -251,10 +254,20 @@ export const Dashboard: React.FC<DashboardProps> = ({
       else if (key === 'vehicleAge') exportParams['vehicle_age'] = val;
       else exportParams[key] = val;
     });
-    window.location.href = api.getExportUrl(selectedUploadId, exportParams);
+    const safeName = (filename || "export").replace(/\.[^/.]+$/, "");
+    const downloadFilename = `CRM_Export_${safeName}.xlsx`;
+    const url = api.getExportUrl(selectedUploadId, exportParams);
+
+    notify("Downloading Excel workbook...", "info", 0);
+    try {
+      await api.downloadFile(url, downloadFilename);
+      notify("Download completed successfully!", "success", 4000);
+    } catch (err: any) {
+      notify(`Download failed: ${err.message}`, "error", 5000);
+    }
   };
 
-  const handleExportJson = () => {
+  const handleExportJson = async () => {
     if (!selectedUploadId) return;
     const exportParams: Record<string, any> = {};
     Object.entries(filters).forEach(([key, val]) => {
@@ -265,7 +278,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
       else if (key === 'vehicleAge') exportParams['vehicle_age'] = val;
       else exportParams[key] = val;
     });
-    window.location.href = api.getExportJsonUrl(selectedUploadId, exportParams);
+    const safeName = (filename || "export").replace(/\.[^/.]+$/, "");
+    const downloadFilename = `CRM_Export_${safeName}.json`;
+    const url = api.getExportJsonUrl(selectedUploadId, exportParams);
+
+    notify("Downloading JSON data...", "info", 0);
+    try {
+      await api.downloadFile(url, downloadFilename);
+      notify("Download completed successfully!", "success", 4000);
+    } catch (err: any) {
+      notify(`Download failed: ${err.message}`, "error", 5000);
+    }
   };
 
   const getOpts = (key: string): FilterOption[] => {
@@ -364,11 +387,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); uploadInputRef.current?.click(); }}
-          disabled={isUploading}
+          disabled={isUploading || isProcessing}
           className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#4F46E5] hover:bg-[#4338CA] disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm font-bold shadow-sm transition-colors duration-150 cursor-pointer flex-shrink-0"
         >
-          {isUploading ? <RefreshCw className="w-4.5 h-4.5 animate-spin" /> : <UploadCloud className="w-4.5 h-4.5" />}
-          <span>{isUploading ? 'Uploading...' : 'Upload Grid'}</span>
+          {isUploading || isProcessing ? <RefreshCw className="w-4.5 h-4.5 animate-spin" /> : <UploadCloud className="w-4.5 h-4.5" />}
+          <span>{isUploading ? 'Uploading...' : (isProcessing ? 'Processing...' : 'Upload Grid')}</span>
         </button>
       </div>
 
@@ -596,7 +619,21 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
       {/* ── TABLE AREA ── */}
       <div className="flex-1 overflow-auto min-h-0">
-        {isLoading ? (
+        {isProcessing ? (
+          <div className="h-full flex flex-col items-center justify-center gap-4 px-4 text-center">
+            <div className="w-16 h-16 rounded-2xl bg-indigo-50 dark:bg-indigo-950/30 flex items-center justify-center border border-indigo-100 dark:border-indigo-900/50 animate-pulse">
+              <RefreshCw className="w-8 h-8 text-[#4F46E5] animate-spin" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-slate-800 dark:text-slate-200">
+                Detecting & Extracting Rules...
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-2 max-w-sm leading-relaxed">
+                We are currently processing the document. The extraction pipeline is analyzing the sheets and extracting normalized CRM rules. This window will auto-update once complete.
+              </p>
+            </div>
+          </div>
+        ) : isLoading ? (
           <div className="h-full flex flex-col items-center justify-center gap-3">
             <RefreshCw className="w-8 h-8 text-[#4F46E5] animate-spin" />
             <p className="text-sm text-slate-500 dark:text-slate-400 font-medium">Loading records...</p>
@@ -838,6 +875,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         selectedUploadId={selectedUploadId}
         onSelectUpload={onSelectUpload}
         onDeleteUpload={onDeleteUpload}
+        onRenameUpload={onRenameUpload}
         isLoading={isUploadsLoading}
         onRefresh={onRefresh || (() => {})}
       />

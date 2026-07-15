@@ -54,6 +54,11 @@ function App() {
   const { data: uploads = [], isLoading: isUploadsLoading } = useQuery({
     queryKey: ['uploads'],
     queryFn: api.getUploads,
+    refetchInterval: (query) => {
+      const data = query?.state?.data as any[] | undefined;
+      const processingExists = data?.some(u => u.status === 'PROCESSING');
+      return processingExists ? 4000 : false;
+    },
   });
 
   // Auto-select the first upload once list loads
@@ -133,8 +138,22 @@ function App() {
     },
   });
 
+  // Rename mutation
+  const renameMutation = useMutation({
+    mutationFn: ({ id, filename }: { id: number; filename: string }) =>
+      api.renameUpload(id, filename),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['uploads'] });
+      notify('File renamed successfully.', 'success');
+    },
+    onError: (err: any) => {
+      notify(`Rename failed: ${err.response?.data?.detail || err.message}`, 'error');
+    },
+  });
+
   const handleUploadFile = (file: File) => uploadMutation.mutate(file);
   const handleDeleteUpload = (id: number) => deleteMutation.mutate(id);
+  const handleRenameUpload = (id: number, filename: string) => renameMutation.mutate({ id, filename });
   const handleSelectUpload = (id: number) => { setSelectedUploadId(id); setPage(1); };
   const handleRefresh = () => {
     queryClient.invalidateQueries({ queryKey: ['uploads'] });
@@ -170,6 +189,7 @@ function App() {
             selectedUploadId={selectedUploadId}
             onSelectUpload={handleSelectUpload}
             onDeleteUpload={handleDeleteUpload}
+            onRenameUpload={handleRenameUpload}
             isUploadsLoading={isUploadsLoading}
             onUploadFile={handleUploadFile}
             isUploading={uploadMutation.isPending}

@@ -7,7 +7,7 @@ from io import BytesIO
 from urllib.parse import quote
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query, BackgroundTasks
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, defer
 from sqlalchemy import desc, or_, and_, insert
 from typing import List, Optional, Dict, Any
 
@@ -19,7 +19,7 @@ from backend.app.services.excel_parser.parser import ExcelParserService
 from backend.app.services.docx_parser.parser import DocxParserService
 from backend.app.services.pdf_parser.parser import PdfParserService
 from backend.app.services.rule_serializer import serialize_commission_rule
-from backend.app.services.excel_export import build_export_workbook
+from backend.app.services.excel_export import build_export_workbook, build_export_from_upload_id
 
 router = APIRouter(prefix="/api")
 logger = logging.getLogger(__name__)
@@ -576,22 +576,49 @@ def export_extracted_records(
     if not upload:
         raise HTTPException(status_code=404, detail="Upload record not found.")
 
-    query = db.query(CommissionRule).options(joinedload(CommissionRule.slabs)).filter(CommissionRule.upload_id == upload_id)
-    query = _apply_rule_filters(
-        query, db, search=search, lob=lob, file_type=file_type, company=company, product=product,
-        policy_type=policy_type, plan_type=plan_type, sub_product=sub_product, class_name=class_name,
-        sub_class=sub_class, make=make, model=model, fuel_type=fuel_type, body_type=body_type,
-        cpa_status=cpa_status, ncb_status=ncb_status, partner_type=partner_type, state=state,
-        zone=zone, source=source, rto=rto, validation_status=validation_status,
-        commission_type=commission_type, has_slabs=has_slabs, vehicle_age=vehicle_age,
-    )
-    rules = query.order_by(CommissionRule.id.asc()).all()
+    # Check if any filters are active. When all filters are at their defaults
+    # (None / unset) we use the fast raw-SQL path that avoids ORM hydration
+    # overhead and reduces export time from 30-60 s to under 10 s for large uploads.
+    _active_filters = any([
+        search, lob, file_type, company, product, policy_type, plan_type,
+        sub_product, class_name, sub_class, make, model, fuel_type, body_type,
+        cpa_status, ncb_status, partner_type, state, zone, source, rto,
+        validation_status, has_slabs, vehicle_age,
+    ])
 
-    try:
-        buffer = build_export_workbook(rules, db)
-    except Exception as e:
-        logger.error(f"Failed to build export workbook for upload {upload_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to generate the Excel export.")
+    if not _active_filters:
+        # ── Fast path: raw SQL + xlsxwriter, no ORM overhead ─────────────────
+        logger.info(f"[EXPORT] Using fast raw-SQL export for upload {upload_id}")
+        try:
+            buffer = build_export_from_upload_id(
+                upload_id=upload_id,
+                db=db,
+                commission_type_filter=commission_type if commission_type else None,
+            )
+        except Exception as e:
+            logger.error(f"[EXPORT] Fast export failed for upload {upload_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to generate the Excel export.")
+    else:
+        # ── Filtered path: ORM query with filters, then xlsxwriter ────────────
+        logger.info(f"[EXPORT] Using filtered ORM export for upload {upload_id}")
+        query = db.query(CommissionRule).options(
+            joinedload(CommissionRule.slabs),
+            defer(CommissionRule.raw_json)
+        ).filter(CommissionRule.upload_id == upload_id)
+        query = _apply_rule_filters(
+            query, db, search=search, lob=lob, file_type=file_type, company=company, product=product,
+            policy_type=policy_type, plan_type=plan_type, sub_product=sub_product, class_name=class_name,
+            sub_class=sub_class, make=make, model=model, fuel_type=fuel_type, body_type=body_type,
+            cpa_status=cpa_status, ncb_status=ncb_status, partner_type=partner_type, state=state,
+            zone=zone, source=source, rto=rto, validation_status=validation_status,
+            commission_type=commission_type, has_slabs=has_slabs, vehicle_age=vehicle_age,
+        )
+        rules = query.order_by(CommissionRule.id.asc()).all()
+        try:
+            buffer = build_export_workbook(rules, db)
+        except Exception as e:
+            logger.error(f"[EXPORT] Filtered export failed for upload {upload_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to generate the Excel export.")
 
     safe_name = "".join(c for c in (upload.filename or "export") if c.isalnum() or c in " ._-").strip() or "export"
     filename = f"CRM_Export_{safe_name}.xlsx"
@@ -636,24 +663,78 @@ def export_upload_json(
     if not upload:
         raise HTTPException(status_code=404, detail="Upload record not found.")
 
-    query = db.query(CommissionRule).options(joinedload(CommissionRule.slabs)).filter(CommissionRule.upload_id == upload_id)
-    query = _apply_rule_filters(
-        query, db, search=search, lob=lob, file_type=file_type, company=company, product=product,
-        policy_type=policy_type, plan_type=plan_type, sub_product=sub_product, class_name=class_name,
-        sub_class=sub_class, make=make, model=model, fuel_type=fuel_type, body_type=body_type,
-        cpa_status=cpa_status, ncb_status=ncb_status, partner_type=partner_type, state=state,
-        zone=zone, source=source, rto=rto, validation_status=validation_status,
-        commission_type=commission_type, has_slabs=has_slabs, vehicle_age=vehicle_age,
-    )
-    rules = query.order_by(CommissionRule.id.asc()).all()
-    
-    serialized_rules = []
-    for r in rules:
-        serialized_rules.append(serialize_commission_rule(r, db))
-        
+    _active_filters = any([
+        search, lob, file_type, company, product, policy_type, plan_type,
+        sub_product, class_name, sub_class, make, model, fuel_type, body_type,
+        cpa_status, ncb_status, partner_type, state, zone, source, rto,
+        validation_status, has_slabs, vehicle_age,
+    ])
+
+    if not _active_filters:
+        # Fast path: raw SQL queries, no ORM hydration
+        from backend.app.services.excel_export import _serialize_rule_dict, _to_pct
+        from sqlalchemy import text as sql_text
+
+        rule_sql = sql_text("""
+            SELECT id, upload_id, lob, file_type, insurance_company, product, policy_type,
+                   plan_type, sub_product, "class", sub_class, make, model, fuel_type, body_type,
+                   vehicle_age_from, vehicle_age_to, cpa_status, ncb_status, partner_type,
+                   state, zone, source, rto, effective_date, remarks,
+                   commission_type, slab_configuration,
+                   payin_od, payin_tp, payin_net, payin_reward, payin_scheme,
+                   validation_status
+            FROM commission_rules
+            WHERE upload_id = :uid
+            ORDER BY id ASC
+        """)
+        cursor = db.execute(rule_sql, {"uid": upload_id})
+        rule_cols = list(cursor.keys())
+        all_rules = [dict(zip(rule_cols, row)) for row in cursor.fetchall()]
+
+        if commission_type:
+            all_rules = [r for r in all_rules if r.get("commission_type") == commission_type]
+
+        rule_ids = [r["id"] for r in all_rules]
+        slabs_by_rule: dict = {}
+        if rule_ids:
+            slab_sql = sql_text("""
+                SELECT commission_rule_id, payin_type, premium_type, slab_from, slab_to,
+                       payin_od, payin_tp, payin_net
+                FROM slab_details
+                WHERE commission_rule_id = ANY(:ids)
+                ORDER BY commission_rule_id, slab_from ASC NULLS LAST
+            """)
+            slab_cursor = db.execute(slab_sql, {"ids": rule_ids})
+            slab_cols = list(slab_cursor.keys())
+            for row in slab_cursor.fetchall():
+                s = dict(zip(slab_cols, row))
+                slabs_by_rule.setdefault(s["commission_rule_id"], []).append(s)
+
+        serialized_rules = [
+            _serialize_rule_dict(r, slabs_by_rule.get(r["id"], []), db)
+            for r in all_rules
+        ]
+    else:
+        query = db.query(CommissionRule).options(
+            joinedload(CommissionRule.slabs),
+            defer(CommissionRule.raw_json)
+        ).filter(CommissionRule.upload_id == upload_id)
+        query = _apply_rule_filters(
+            query, db, search=search, lob=lob, file_type=file_type, company=company, product=product,
+            policy_type=policy_type, plan_type=plan_type, sub_product=sub_product, class_name=class_name,
+            sub_class=sub_class, make=make, model=model, fuel_type=fuel_type, body_type=body_type,
+            cpa_status=cpa_status, ncb_status=ncb_status, partner_type=partner_type, state=state,
+            zone=zone, source=source, rto=rto, validation_status=validation_status,
+            commission_type=commission_type, has_slabs=has_slabs, vehicle_age=vehicle_age,
+        )
+        rules = query.order_by(CommissionRule.id.asc()).all()
+        serialized_rules = [
+            serialize_commission_rule(r, db, exclude_raw_json=True) for r in rules
+        ]
+
     safe_name = "".join(c for c in (upload.filename or "export") if c.isalnum() or c in " ._-").strip() or "export"
     filename = f"CRM_Export_{safe_name}.json"
-    
+
     json_bytes = json.dumps(serialized_rules, default=str, indent=2).encode("utf-8")
     buffer = BytesIO(json_bytes)
     return StreamingResponse(
@@ -661,6 +742,30 @@ def export_upload_json(
         media_type="application/json",
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
     )
+
+
+
+@router.patch("/uploads/{upload_id}/rename")
+def rename_upload(upload_id: int, body: dict, db: Session = Depends(get_db)):
+    """
+    Renames the filename displayed for an upload in history.
+    Body: { "filename": "new name" }
+    """
+    new_name = (body.get("filename") or "").strip()
+    if not new_name:
+        raise HTTPException(status_code=400, detail="filename must not be empty.")
+    upload = db.query(UploadHistory).filter(UploadHistory.id == upload_id).first()
+    if not upload:
+        raise HTTPException(status_code=404, detail="Upload record not found.")
+    upload.filename = new_name
+    try:
+        db.commit()
+        db.refresh(upload)
+        return {"id": upload.id, "filename": upload.filename}
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to rename upload {upload_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to rename upload.")
 
 
 @router.delete("/uploads/{upload_id}")

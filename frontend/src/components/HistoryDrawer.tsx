@@ -11,6 +11,7 @@ interface HistoryDrawerProps {
   selectedUploadId: number | null;
   onSelectUpload: (id: number) => void;
   onDeleteUpload: (id: number) => void;
+  onRenameUpload: (id: number, filename: string) => void;
   isLoading: boolean;
   onRefresh: () => void;
 }
@@ -24,10 +25,13 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
   selectedUploadId,
   onSelectUpload,
   onDeleteUpload,
+  onRenameUpload,
   isLoading,
   onRefresh,
 }) => {
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editName, setEditName] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [sortMode, setSortMode] = useState<SortMode>('recent');
 
@@ -188,7 +192,50 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
                     <p className={`text-xs font-bold uppercase tracking-wide truncate ${isSelected ? 'text-[#4F46E5] dark:text-indigo-300' : 'text-slate-700 dark:text-slate-300'}`}>
                       {u.company || 'N/A'}
                     </p>
-                    <p className="text-xs text-slate-400 dark:text-slate-500 truncate mt-0.5">{u.filename}</p>
+                    {editingId === u.id ? (
+                      <div className="flex items-center gap-1.5 mt-1" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="text"
+                          value={editName}
+                          onChange={(e) => setEditName(e.target.value)}
+                          className="flex-1 px-2 py-0.5 rounded bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:border-[#4F46E5]"
+                          autoFocus
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              if (editName.strip ? editName.strip() : editName.trim()) {
+                                onRenameUpload(u.id, editName.trim());
+                                setEditingId(null);
+                              }
+                            } else if (e.key === 'Escape') {
+                              setEditingId(null);
+                            }
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (editName.trim()) {
+                              onRenameUpload(u.id, editName.trim());
+                              setEditingId(null);
+                            }
+                          }}
+                          className="p-1 rounded hover:bg-emerald-50 dark:hover:bg-emerald-500/10 text-emerald-600 cursor-pointer"
+                          title="Save"
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditingId(null)}
+                          className="p-1 rounded hover:bg-red-50 dark:hover:bg-red-500/10 text-red-600 cursor-pointer"
+                          title="Cancel"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-slate-400 dark:text-slate-500 truncate mt-0.5">{u.filename}</p>
+                    )}
                     <div className="flex items-center gap-2 mt-2">
                       <span className="text-xs text-slate-400 dark:text-slate-600">{dateStr}, {timeStr}</span>
                       {u.total_records > 0 && (
@@ -200,15 +247,33 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
                       )}
                     </div>
                   </div>
-                  {/* Delete button — visible on hover */}
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(u.id); }}
-                    className="opacity-0 group-hover:opacity-100 flex-shrink-0 mt-0.5 p-1.5 rounded-lg text-slate-400 dark:text-slate-600 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-all cursor-pointer"
-                    title="Delete upload"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+                  {/* Action buttons (Rename & Delete) — visible on hover */}
+                  {editingId !== u.id && (
+                    <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 flex-shrink-0 mt-0.5">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditingId(u.id);
+                          setEditName(u.filename || '');
+                        }}
+                        className="p-1.5 rounded-lg text-slate-400 dark:text-slate-600 hover:text-[#4F46E5] dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all cursor-pointer"
+                        title="Rename file"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(u.id); }}
+                        className="p-1.5 rounded-lg text-slate-400 dark:text-slate-600 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-all cursor-pointer"
+                        title="Delete upload"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
                 </div>
               );
             })
