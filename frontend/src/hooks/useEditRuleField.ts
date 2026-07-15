@@ -88,7 +88,7 @@ export function useEditRuleField() {
         queryClient.setQueryData(key, data);
       });
       const detail = err?.response?.data?.detail || err?.message || 'Unable to update record.';
-      notify(detail, 'error', {
+      notify(detail, 'error', undefined, {
         label: 'Retry',
         onClick: () => mutationRef.current?.mutate(vars),
       });

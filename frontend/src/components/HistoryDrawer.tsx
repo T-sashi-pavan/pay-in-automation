@@ -202,7 +202,7 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
                           autoFocus
                           onKeyDown={(e) => {
                             if (e.key === 'Enter') {
-                              if (editName.strip ? editName.strip() : editName.trim()) {
+                              if (editName.trim()) {
                                 onRenameUpload(u.id, editName.trim());
                                 setEditingId(null);
                               }

@@ -14,7 +14,7 @@ export interface SlabDetail {
   payin_type: string | null;
   premium_type: string | null;
   slab_from: number | null;
-  slab_to: number | null;
+  slab_to: number | string | null;
   payin_od: number | null;
   payout_od: number | null;
   payin_tp: number | null;
