@@ -671,11 +671,11 @@ def export_upload_json(
     ])
 
     if not _active_filters:
-        # Fast path: raw SQL queries, no ORM hydration
-        from backend.app.services.excel_export import _serialize_rule_dict, _to_pct
+        # Fast path: raw SQL queries, limited to top 10 Non-Slab and top 10 Slab
+        from backend.app.services.excel_export import _serialize_rule_dict
         from sqlalchemy import text as sql_text
 
-        rule_sql = sql_text("""
+        base_sql = """
             SELECT id, upload_id, lob, file_type, insurance_company, product, policy_type,
                    plan_type, sub_product, "class", sub_class, make, model, fuel_type, body_type,
                    vehicle_age_from, vehicle_age_to, cpa_status, ncb_status, partner_type,
@@ -685,14 +685,37 @@ def export_upload_json(
                    validation_status
             FROM commission_rules
             WHERE upload_id = :uid
-            ORDER BY id ASC
-        """)
-        cursor = db.execute(rule_sql, {"uid": upload_id})
-        rule_cols = list(cursor.keys())
-        all_rules = [dict(zip(rule_cols, row)) for row in cursor.fetchall()]
+        """
 
-        if commission_type:
-            all_rules = [r for r in all_rules if r.get("commission_type") == commission_type]
+        if commission_type == "SLAB":
+            non_slab_rules = []
+            slab_sql = sql_text(base_sql + " AND commission_type = 'SLAB' ORDER BY id ASC LIMIT 10")
+            slab_cursor = db.execute(slab_sql, {"uid": upload_id})
+            slab_cols = list(slab_cursor.keys())
+            slab_rules = [dict(zip(slab_cols, row)) for row in slab_cursor.fetchall()]
+        elif commission_type == "NON_SLAB":
+            slab_rules = []
+            non_slab_sql = sql_text(base_sql + " AND (commission_type IS NULL OR commission_type != 'SLAB') ORDER BY id ASC LIMIT 10")
+            non_slab_cursor = db.execute(non_slab_sql, {"uid": upload_id})
+            non_slab_cols = list(non_slab_cursor.keys())
+            non_slab_rules = [dict(zip(non_slab_cols, row)) for row in non_slab_cursor.fetchall()]
+        else:
+            non_slab_sql = sql_text(base_sql + " AND (commission_type IS NULL OR commission_type != 'SLAB') ORDER BY id ASC LIMIT 10")
+            non_slab_cursor = db.execute(non_slab_sql, {"uid": upload_id})
+            non_slab_cols = list(non_slab_cursor.keys())
+            non_slab_rules = [dict(zip(non_slab_cols, row)) for row in non_slab_cursor.fetchall()]
+
+            slab_sql = sql_text(base_sql + " AND commission_type = 'SLAB' ORDER BY id ASC LIMIT 10")
+            slab_cursor = db.execute(slab_sql, {"uid": upload_id})
+            slab_cols = list(slab_cursor.keys())
+            slab_rules = [dict(zip(slab_cols, row)) for row in slab_cursor.fetchall()]
+
+        # If SLAB data is present, download top 10 Non-Slab + top 10 Slab;
+        # otherwise (if no SLAB data), download top 10 Non-Slab.
+        if slab_rules:
+            all_rules = non_slab_rules + slab_rules
+        else:
+            all_rules = non_slab_rules
 
         rule_ids = [r["id"] for r in all_rules]
         slabs_by_rule: dict = {}
@@ -715,19 +738,37 @@ def export_upload_json(
             for r in all_rules
         ]
     else:
-        query = db.query(CommissionRule).options(
-            joinedload(CommissionRule.slabs),
-            defer(CommissionRule.raw_json)
-        ).filter(CommissionRule.upload_id == upload_id)
-        query = _apply_rule_filters(
-            query, db, search=search, lob=lob, file_type=file_type, company=company, product=product,
-            policy_type=policy_type, plan_type=plan_type, sub_product=sub_product, class_name=class_name,
-            sub_class=sub_class, make=make, model=model, fuel_type=fuel_type, body_type=body_type,
-            cpa_status=cpa_status, ncb_status=ncb_status, partner_type=partner_type, state=state,
-            zone=zone, source=source, rto=rto, validation_status=validation_status,
-            commission_type=commission_type, has_slabs=has_slabs, vehicle_age=vehicle_age,
-        )
-        rules = query.order_by(CommissionRule.id.asc()).all()
+        def _get_filtered_rules(target_ct: Optional[str]):
+            query = db.query(CommissionRule).options(
+                joinedload(CommissionRule.slabs),
+                defer(CommissionRule.raw_json)
+            ).filter(CommissionRule.upload_id == upload_id)
+            query = _apply_rule_filters(
+                query, db, search=search, lob=lob, file_type=file_type, company=company, product=product,
+                policy_type=policy_type, plan_type=plan_type, sub_product=sub_product, class_name=class_name,
+                sub_class=sub_class, make=make, model=model, fuel_type=fuel_type, body_type=body_type,
+                cpa_status=cpa_status, ncb_status=ncb_status, partner_type=partner_type, state=state,
+                zone=zone, source=source, rto=rto, validation_status=validation_status,
+                commission_type=None, has_slabs=has_slabs, vehicle_age=vehicle_age,
+            )
+            if target_ct == "SLAB":
+                query = query.filter(CommissionRule.commission_type == "SLAB")
+            elif target_ct == "NON_SLAB":
+                query = query.filter(or_(CommissionRule.commission_type != "SLAB", CommissionRule.commission_type.is_(None)))
+            return query.order_by(CommissionRule.id.asc()).limit(10).all()
+
+        if commission_type == "SLAB":
+            rules = _get_filtered_rules("SLAB")
+        elif commission_type == "NON_SLAB":
+            rules = _get_filtered_rules("NON_SLAB")
+        else:
+            non_slab_rules = _get_filtered_rules("NON_SLAB")
+            slab_rules = _get_filtered_rules("SLAB")
+            if slab_rules:
+                rules = non_slab_rules + slab_rules
+            else:
+                rules = non_slab_rules
+
         serialized_rules = [
             serialize_commission_rule(r, db, exclude_raw_json=True) for r in rules
         ]

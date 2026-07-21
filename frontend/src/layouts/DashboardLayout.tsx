@@ -5,7 +5,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Layers,
-  Zap,
 } from 'lucide-react';
 import { useSidebar } from '../contexts/SidebarContext';
 
@@ -37,7 +36,6 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ activeTab, onT
   const navItems = [
     { id: 'dashboard' as const, label: 'Dashboard', icon: LayoutDashboard },
     { id: 'upload' as const, label: 'Upload Files', icon: UploadCloud },
-    { id: 'automation' as const, label: 'Automation', icon: Zap },
   ];
 
   const sidebarWidth = collapsed ? COLLAPSED_WIDTH : EXPANDED_WIDTH;

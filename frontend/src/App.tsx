@@ -11,7 +11,6 @@ import { useNotification } from './contexts/NotificationContext';
 
 const getInitialTab = (): 'dashboard' | 'upload' | 'customise' | 'automation' => {
   const path = window.location.pathname.replace(/^\//, '');
-  if (path === 'automation') return 'automation';
   if (path === 'dashboard') return 'dashboard';
   if (path === 'customise') return 'customise';
   return 'upload';
